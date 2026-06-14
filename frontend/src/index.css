@@ -1,0 +1,134 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    color-scheme: light;
+    /* Default brand theme: emerald (overridden at runtime by lib/branding.js) */
+    --brand-50: 236 253 245;
+    --brand-100: 209 250 229;
+    --brand-200: 167 243 208;
+    --brand-300: 110 231 183;
+    --brand-400: 52 211 153;
+    --brand-500: 16 185 129;
+    --brand-600: 5 150 105;
+    --brand-700: 4 120 87;
+    --brand-800: 6 95 70;
+    --brand-900: 6 78 59;
+    --brand-950: 2 44 34;
+    --accent: 20 184 166;
+    --accent-contrast: 255 255 255;
+    /* Chrome (sidebar / top bar) — light defaults; themes may override.
+       Triplets so we can apply alpha, e.g. rgb(var(--sidebar-text) / 0.6). */
+    --sidebar-bg: 255 255 255;
+    --sidebar-text: 45 53 42;
+    --sidebar-hover: 0 0 0;
+    --topbar-bg: 246 247 245;
+    --topbar-text: 45 53 42;
+  }
+  html.dark {
+    color-scheme: dark;
+    --sidebar-bg: 45 53 42;
+    --sidebar-text: 240 241 239;
+    --sidebar-hover: 255 255 255;
+    --topbar-bg: 22 27 20;
+    --topbar-text: 240 241 239;
+  }
+  body {
+    @apply bg-sage-50 text-sage-900 antialiased;
+    font-feature-settings: "cv05", "ss01";
+  }
+  html.dark body {
+    @apply bg-sage-950 text-sage-100;
+  }
+}
+
+@layer components {
+  .card {
+    @apply rounded-2xl border border-sage-200 bg-white shadow-soft dark:border-sage-800 dark:bg-sage-900;
+  }
+  .btn {
+    @apply inline-flex items-center justify-center gap-2 rounded-xl px-4 py-2.5 text-sm font-semibold transition focus:outline-none focus:ring-2 focus:ring-brand-500/40 disabled:opacity-50 disabled:pointer-events-none;
+  }
+  .btn-primary {
+    @apply btn bg-brand-600 text-white hover:bg-brand-700 active:bg-brand-800;
+  }
+  .btn-ghost {
+    @apply btn text-sage-700 hover:bg-sage-100 dark:text-sage-200 dark:hover:bg-sage-800;
+  }
+  .btn-outline {
+    @apply btn border border-sage-300 text-sage-800 hover:bg-sage-100 dark:border-sage-700 dark:text-sage-100 dark:hover:bg-sage-800;
+  }
+  .input {
+    @apply w-full rounded-xl border border-sage-300 bg-white px-3.5 py-2.5 text-sm text-sage-900 placeholder-sage-400 shadow-sm transition focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-500/30 dark:border-sage-700 dark:bg-sage-950 dark:text-sage-100 dark:placeholder-sage-500;
+  }
+  .label {
+    @apply mb-1.5 block text-sm font-medium text-sage-700 dark:text-sage-300;
+  }
+  .chip {
+    @apply inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-xs font-medium;
+  }
+
+  /* Themeable chrome (sidebar / top bar) driven by --sidebar-* / --topbar-* */
+  .app-sidebar {
+    background-color: rgb(var(--sidebar-bg));
+    color: rgb(var(--sidebar-text));
+    border-color: rgb(var(--sidebar-text) / 0.1);
+  }
+  .app-topbar {
+    background-color: rgb(var(--topbar-bg) / 0.85);
+    color: rgb(var(--topbar-text));
+    border-color: rgb(var(--topbar-text) / 0.1);
+  }
+  .sidebar-divider {
+    border-color: rgb(var(--sidebar-text) / 0.12);
+  }
+  .nav-item {
+    @apply flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium transition;
+    color: rgb(var(--sidebar-text) / 0.72);
+  }
+  .nav-item:hover {
+    background-color: rgb(var(--sidebar-hover) / 0.08);
+    color: rgb(var(--sidebar-text));
+  }
+  .nav-item-active {
+    background-color: rgb(var(--brand-600));
+    color: #fff;
+  }
+  .nav-item-active:hover {
+    background-color: rgb(var(--brand-600));
+    color: #fff;
+  }
+}
+
+/* Print only the receipt body */
+@media print {
+  body * {
+    visibility: hidden;
+  }
+  #receipt,
+  #receipt * {
+    visibility: visible;
+  }
+  #receipt {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 100%;
+    padding: 0;
+    color: #000;
+  }
+}
+
+/* Custom scrollbar */
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-thumb {
+  @apply rounded-full bg-sage-300 dark:bg-sage-700;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}

@@ -1,0 +1,468 @@
+import { useEffect, useMemo, useRef, useState } from "react";
+import { api } from "../lib/api.js";
+import { useAuth } from "../context/AuthContext.jsx";
+import { money } from "../lib/money.js";
+import ReceiptModal from "../components/Receipt.jsx";
+import {
+  Search, Plus, Minus, Trash2, ShoppingCart, Loader2, CheckCircle2, X,
+  ShieldAlert, Banknote, CreditCard, Smartphone, ScanLine, HandCoins, Wallet, Lock,
+} from "lucide-react";
+
+const PAYMENTS = [
+  { key: "cash", label: "Cash", icon: Banknote },
+  { key: "card", label: "Card", icon: CreditCard },
+  { key: "mobile", label: "Mobile", icon: Smartphone },
+];
+
+export default function POS() {
+  const { user, settings, moduleEnabled, can } = useAuth();
+  const customersOn = moduleEnabled("customers");
+  const canDiscount = can("pos.discount");
+  const canAccount = can("pos.account");
+  const financeOn = moduleEnabled("finance");
+  const controlledOn = moduleEnabled("controlled_drugs");
+  const [shift, setShift] = useState(undefined); // undefined=checking, null=none, obj=open
+  const [prescriber, setPrescriber] = useState({ name: "", license: "" });
+  const [products, setProducts] = useState(null);
+  const [q, setQ] = useState("");
+  const [cart, setCart] = useState([]); // {id, name, price, unit, stock, qty, is_controlled}
+  const [discount, setDiscount] = useState("");
+  const [payment, setPayment] = useState("cash");
+  const [customer, setCustomer] = useState("");        // free-text name (walk-in)
+  const [custId, setCustId] = useState(null);          // registered customer
+  const [custObj, setCustObj] = useState(null);        // {name, balance, credit_limit}
+  const [custQuery, setCustQuery] = useState("");
+  const [custResults, setCustResults] = useState([]);
+  const [tendered, setTendered] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+  const [receipt, setReceipt] = useState(null);
+  const searchRef = useRef(null);
+
+  // Customer search (registered customers, when the module is on)
+  useEffect(() => {
+    if (!customersOn || custId) return;
+    const t = custQuery.trim();
+    if (!t) { setCustResults([]); return; }
+    const h = setTimeout(() => {
+      api("/api/customers", { params: { q: t } }).then((r) => setCustResults(r.slice(0, 6))).catch(() => {});
+    }, 200);
+    return () => clearTimeout(h);
+  }, [custQuery, customersOn, custId]);
+
+  const pickCustomer = (c) => {
+    setCustId(c.id);
+    setCustObj(c);
+    setCustomer(c.name);
+    setCustQuery("");
+    setCustResults([]);
+  };
+  const clearCustomer = () => {
+    setCustId(null); setCustObj(null); setCustomer(""); setCustQuery("");
+    if (payment === "account") setPayment("cash");
+  };
+
+  const load = () => api("/api/pos/products").then(setProducts).catch((e) => setErr(e.message));
+  const checkShift = () => {
+    if (!financeOn) { setShift(null); return; }
+    api("/api/finance/shift/current").then((r) => setShift(r.shift || null)).catch(() => setShift(null));
+  };
+  useEffect(() => {
+    load();
+    checkShift();
+    searchRef.current?.focus();
+  }, []);
+
+  const filtered = useMemo(() => {
+    if (!products) return [];
+    const term = q.trim().toLowerCase();
+    const list = term
+      ? products.filter((p) =>
+          [p.name, p.generic_name, p.category, p.barcode]
+            .filter(Boolean)
+            .some((v) => v.toLowerCase().includes(term))
+        )
+      : products;
+    return list.slice(0, 60);
+  }, [products, q]);
+
+  const inCart = (id) => cart.find((c) => c.id === id)?.qty || 0;
+
+  const addToCart = (p) => {
+    if (p.stock <= 0) return;
+    setErr("");
+    setCart((prev) => {
+      const ex = prev.find((c) => c.id === p.id);
+      if (ex) {
+        if (ex.qty >= p.stock) return prev;
+        return prev.map((c) => (c.id === p.id ? { ...c, qty: c.qty + 1 } : c));
+      }
+      return [...prev, { id: p.id, name: p.name, price: p.price, unit: p.unit, stock: p.stock, qty: 1, is_controlled: p.is_controlled }];
+    });
+  };
+
+  const setQty = (id, qty) =>
+    setCart((prev) =>
+      prev.flatMap((c) => {
+        if (c.id !== id) return [c];
+        const n = Math.max(0, Math.min(qty, c.stock));
+        return n === 0 ? [] : [{ ...c, qty: n }];
+      })
+    );
+
+  const removeLine = (id) => setCart((prev) => prev.filter((c) => c.id !== id));
+
+  const onSearchKey = (e) => {
+    if (e.key !== "Enter") return;
+    const term = q.trim().toLowerCase();
+    if (!term) return;
+    const exact = products?.find((p) => p.barcode && p.barcode.toLowerCase() === term);
+    const pick = exact || filtered[0];
+    if (pick && pick.stock > 0) {
+      addToCart(pick);
+      setQ("");
+    }
+  };
+
+  const taxPct = Number(settings?.tax_percent || 0);
+  const subtotal = cart.reduce((s, c) => s + c.qty * c.price, 0);
+  const disc = Math.max(0, Math.min(Number(discount) || 0, subtotal));
+  const taxable = subtotal - disc;
+  const tax = Math.round(taxable * (taxPct / 100) * 100) / 100;
+  const total = taxable + tax;
+  const tend = Number(tendered) || 0;
+  const change = payment === "cash" && tend > 0 ? Math.max(0, tend - total) : null;
+  const short = payment === "cash" && tendered !== "" && tend < total;
+  // On-account credit headroom check (mirrors the server rule)
+  const overLimit = payment === "account" && custObj && Number(custObj.credit_limit) > 0 &&
+    Number(custObj.balance) + total > Number(custObj.credit_limit) + 1e-9;
+  // Controlled-drug compliance gate (mirrors the server rule)
+  const hasControlled = controlledOn && cart.some((c) => c.is_controlled);
+  const controlledBlocked = hasControlled && (!prescriber.license.trim() || !(custId || customer.trim()));
+
+  const checkout = async () => {
+    if (cart.length === 0) return;
+    setBusy(true);
+    setErr("");
+    try {
+      const res = await api("/api/sales", {
+        method: "POST",
+        body: {
+          items: cart.map((c) => ({ product_id: c.id, qty: c.qty })),
+          discount: disc,
+          payment_method: payment,
+          customer_id: custId || null,
+          customer_name: customer || null,
+          amount_paid: payment === "cash" && tendered !== "" ? tend : null,
+          prescriber_name: hasControlled ? prescriber.name || null : null,
+          prescriber_license: hasControlled ? prescriber.license || null : null,
+        },
+      });
+      setReceipt(res);
+      setCart([]);
+      setDiscount("");
+      clearCustomer();
+      setTendered("");
+      setPrescriber({ name: "", license: "" });
+      load();
+      searchRef.current?.focus();
+    } catch (e) {
+      if (e.data?.code === "NO_SHIFT") setShift(null); // surface the open-till gate
+      setErr(e.message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  // Open-till gate: when Finance is licensed, the cashier must open a till first.
+  if (financeOn && shift === null) {
+    return <OpenTill onOpened={(s) => setShift(s)} cashier={user?.full_name} />;
+  }
+
+  return (
+    <div className="grid h-[calc(100vh-7rem)] grid-cols-1 gap-5 lg:grid-cols-[1fr_400px]">
+      {/* Catalogue */}
+      <div className="flex min-h-0 flex-col">
+        <div className="relative">
+          <ScanLine className="pointer-events-none absolute left-3.5 top-1/2 h-5 w-5 -translate-y-1/2 text-brand-500" />
+          <input
+            ref={searchRef}
+            className="input py-3 pl-11 text-base"
+            placeholder="Scan barcode or search a product, then press Enter…"
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
+            onKeyDown={onSearchKey}
+          />
+        </div>
+
+        <div className="mt-4 min-h-0 flex-1 overflow-y-auto pr-1">
+          {!products ? (
+            <div className="flex h-40 items-center justify-center text-sage-400">
+              <Loader2 className="h-5 w-5 animate-spin" />
+            </div>
+          ) : (
+            <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-4">
+              {filtered.map((p) => {
+                const out = p.stock <= 0;
+                const taken = inCart(p.id);
+                return (
+                  <button
+                    key={p.id}
+                    onClick={() => addToCart(p)}
+                    disabled={out || taken >= p.stock}
+                    className="card group relative flex flex-col p-3.5 text-left transition hover:border-brand-400 hover:shadow-md disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    {p.is_controlled && (
+                      <ShieldAlert className="absolute right-2.5 top-2.5 h-4 w-4 text-rose-500" title="Controlled" />
+                    )}
+                    <div className="line-clamp-2 pr-4 text-sm font-semibold text-sage-900 dark:text-sage-50">
+                      {p.name}
+                    </div>
+                    <div className="mt-0.5 text-xs text-sage-400">
+                      {[p.strength, p.dosage_form].filter(Boolean).join(" · ") || p.category || " "}
+                    </div>
+                    <div className="mt-auto flex items-end justify-between pt-3">
+                      <span className="text-base font-semibold text-brand-700 dark:text-brand-400">
+                        {money(p.price)}
+                      </span>
+                      <span
+                        className={`chip ${
+                          out
+                            ? "bg-sage-100 text-sage-400 dark:bg-sage-800 dark:text-sage-500"
+                            : p.stock <= 10
+                            ? "bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300"
+                            : "bg-brand-100 text-brand-700 dark:bg-brand-900/40 dark:text-brand-300"
+                        }`}
+                      >
+                        {out ? "Out" : `${p.stock - taken} ${p.unit}`}
+                      </span>
+                    </div>
+                  </button>
+                );
+              })}
+              {filtered.length === 0 && (
+                <div className="col-span-full py-10 text-center text-sage-400">
+                  No products match “{q}”.
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Cart / checkout */}
+      <div className="card flex min-h-0 flex-col">
+        <div className="flex items-center justify-between border-b border-sage-200 px-5 py-4 dark:border-sage-800">
+          <div className="flex items-center gap-2 font-display text-lg font-semibold text-sage-900 dark:text-sage-50">
+            <ShoppingCart className="h-5 w-5 text-brand-600" /> Current sale
+          </div>
+          {cart.length > 0 && (
+            <button onClick={() => setCart([])} className="text-xs font-medium text-sage-400 hover:text-rose-500">
+              Clear
+            </button>
+          )}
+        </div>
+
+        <div className="min-h-0 flex-1 overflow-y-auto px-3 py-2">
+          {cart.length === 0 ? (
+            <div className="flex h-full flex-col items-center justify-center px-6 text-center text-sage-400">
+              <ShoppingCart className="mb-3 h-10 w-10 opacity-40" />
+              <p className="text-sm">Scan or tap a product to start a sale.</p>
+            </div>
+          ) : (
+            cart.map((c) => (
+              <div key={c.id} className="flex items-center gap-2 rounded-xl px-2 py-2 hover:bg-sage-50 dark:hover:bg-sage-800/50">
+                <div className="min-w-0 flex-1">
+                  <div className="truncate text-sm font-medium text-sage-900 dark:text-sage-50">{c.name}</div>
+                  <div className="text-xs text-sage-400">{money(c.price)} × {c.qty}</div>
+                </div>
+                <div className="flex items-center gap-1">
+                  <button onClick={() => setQty(c.id, c.qty - 1)} className="btn-ghost !p-1.5">
+                    <Minus className="h-3.5 w-3.5" />
+                  </button>
+                  <input
+                    className="w-10 rounded-lg border border-sage-200 bg-transparent py-1 text-center text-sm dark:border-sage-700"
+                    value={c.qty}
+                    onChange={(e) => setQty(c.id, parseInt(e.target.value, 10) || 0)}
+                  />
+                  <button
+                    onClick={() => setQty(c.id, c.qty + 1)}
+                    disabled={c.qty >= c.stock}
+                    className="btn-ghost !p-1.5 disabled:opacity-40"
+                  >
+                    <Plus className="h-3.5 w-3.5" />
+                  </button>
+                </div>
+                <div className="w-16 text-right text-sm font-semibold text-sage-900 dark:text-sage-50">
+                  {money(c.qty * c.price)}
+                </div>
+                <button onClick={() => removeLine(c.id)} className="btn-ghost !p-1.5 text-sage-400 hover:text-rose-500">
+                  <Trash2 className="h-3.5 w-3.5" />
+                </button>
+              </div>
+            ))
+          )}
+        </div>
+
+        {/* Totals + checkout */}
+        <div className="space-y-3 border-t border-sage-200 px-5 py-4 dark:border-sage-800">
+          {/* Customer */}
+          {customersOn ? (
+            custObj ? (
+              <div className="flex items-center justify-between rounded-xl border border-brand-200 bg-brand-50 px-3 py-2 text-sm dark:border-brand-900/50 dark:bg-brand-900/20">
+                <div className="min-w-0">
+                  <div className="truncate font-medium text-brand-800 dark:text-brand-200">{custObj.name}</div>
+                  <div className="text-xs text-brand-600/80 dark:text-brand-300/80">
+                    Owes {money(custObj.balance)}{Number(custObj.credit_limit) > 0 ? ` · limit ${money(custObj.credit_limit)}` : ""}
+                  </div>
+                </div>
+                <button onClick={clearCustomer} className="btn-ghost !px-2 !py-1"><X className="h-4 w-4" /></button>
+              </div>
+            ) : (
+              <div className="relative">
+                <input className="input !py-2" placeholder="Find / add a customer (optional)" value={custQuery} onChange={(e) => setCustQuery(e.target.value)} />
+                {custResults.length > 0 && (
+                  <div className="absolute z-20 mt-1 w-full overflow-hidden rounded-xl border border-sage-200 bg-white shadow-soft dark:border-sage-700 dark:bg-sage-900">
+                    {custResults.map((c) => (
+                      <button key={c.id} onClick={() => pickCustomer(c)} className="flex w-full items-center justify-between px-3 py-2 text-left text-sm hover:bg-sage-50 dark:hover:bg-sage-800">
+                        <span className="text-sage-800 dark:text-sage-100">{c.name} <span className="text-xs text-sage-400">{c.phone || ""}</span></span>
+                        {Number(c.balance) > 0 && <span className="text-xs text-amber-600">{money(c.balance)}</span>}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )
+          ) : (
+            <input className="input !py-2" placeholder="Customer (optional)" value={customer} onChange={(e) => setCustomer(e.target.value)} />
+          )}
+
+          {/* Controlled-drug compliance: prescriber details required */}
+          {hasControlled && (
+            <div className="space-y-2 rounded-xl border border-rose-200 bg-rose-50 p-2.5 dark:border-rose-900/50 dark:bg-rose-950/30">
+              <div className="flex items-center gap-1.5 text-xs font-semibold text-rose-600 dark:text-rose-300">
+                <ShieldAlert className="h-3.5 w-3.5" /> Controlled item — prescriber required
+              </div>
+              <input className="input !py-2" placeholder="Prescriber name" value={prescriber.name}
+                onChange={(e) => setPrescriber({ ...prescriber, name: e.target.value })} />
+              <input className="input !py-2" placeholder="Prescriber license no. *" value={prescriber.license}
+                onChange={(e) => setPrescriber({ ...prescriber, license: e.target.value })} />
+              {!(custId || customer.trim()) && <div className="text-xs text-rose-600 dark:text-rose-400">A customer is also required.</div>}
+            </div>
+          )}
+
+          <input
+            type="number"
+            min="0"
+            disabled={!canDiscount}
+            title={canDiscount ? "" : "You don't have permission to apply discounts"}
+            className="input !py-2 disabled:cursor-not-allowed disabled:opacity-50"
+            placeholder={canDiscount ? "Discount" : "Discount (not permitted)"}
+            value={discount}
+            onChange={(e) => setDiscount(e.target.value)}
+          />
+
+          <div className={`grid gap-2 ${custId && canAccount ? "grid-cols-4" : "grid-cols-3"}`}>
+            {[...PAYMENTS, ...(custId && canAccount ? [{ key: "account", label: "Account", icon: HandCoins }] : [])].map((p) => (
+              <button
+                key={p.key}
+                onClick={() => setPayment(p.key)}
+                className={`flex flex-col items-center gap-1 rounded-xl border px-2 py-2 text-xs font-medium transition ${
+                  payment === p.key
+                    ? "border-brand-500 bg-brand-50 text-brand-700 dark:bg-brand-900/30 dark:text-brand-300"
+                    : "border-sage-200 text-sage-500 hover:bg-sage-50 dark:border-sage-700 dark:hover:bg-sage-800"
+                }`}
+              >
+                <p.icon className="h-4 w-4" /> {p.label}
+              </button>
+            ))}
+          </div>
+
+          {payment === "cash" && (
+            <input
+              type="number"
+              min="0"
+              className="input !py-2"
+              placeholder="Amount tendered"
+              value={tendered}
+              onChange={(e) => setTendered(e.target.value)}
+            />
+          )}
+
+          <div className="space-y-1 rounded-xl bg-sage-50 p-3 text-sm dark:bg-sage-950">
+            <div className="flex justify-between text-sage-500 dark:text-sage-400">
+              <span>Subtotal</span><span>{money(subtotal)}</span>
+            </div>
+            {disc > 0 && (
+              <div className="flex justify-between text-sage-500 dark:text-sage-400">
+                <span>Discount</span><span>−{money(disc)}</span>
+              </div>
+            )}
+            {tax > 0 && (
+              <div className="flex justify-between text-sage-500 dark:text-sage-400">
+                <span>Tax ({taxPct}%)</span><span>{money(tax)}</span>
+              </div>
+            )}
+            <div className="flex justify-between text-lg font-semibold text-sage-900 dark:text-sage-50">
+              <span>Total</span><span>{money(total)}</span>
+            </div>
+            {change != null && (
+              <div className="flex justify-between font-medium text-brand-600 dark:text-brand-400">
+                <span>Change</span><span>{money(change)}</span>
+              </div>
+            )}
+          </div>
+
+          {short && <div className="text-sm text-amber-600 dark:text-amber-400">Amount tendered is less than the total.</div>}
+          {overLimit && <div className="text-sm text-rose-600 dark:text-rose-400">This sale exceeds the customer's credit limit.</div>}
+          {err && <div className="text-sm text-rose-600 dark:text-rose-400">{err}</div>}
+
+          <button onClick={checkout} disabled={busy || cart.length === 0 || short || overLimit || controlledBlocked} className="btn-primary w-full !py-3 text-base">
+            {busy ? <Loader2 className="h-5 w-5 animate-spin" /> : payment === "account" ? <HandCoins className="h-5 w-5" /> : <CheckCircle2 className="h-5 w-5" />}
+            {payment === "account" ? "Charge to account" : "Complete sale"} · {money(total)}
+          </button>
+        </div>
+      </div>
+
+      {receipt && (
+        <ReceiptModal receipt={receipt} cashier={user?.full_name} branch={user?.branch_name} settings={settings} onClose={() => setReceipt(null)} />
+      )}
+    </div>
+  );
+}
+
+// Shown before any sale when Finance is on and the cashier has no open till.
+function OpenTill({ onOpened, cashier }) {
+  const [float, setFloat] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+  const open = async (e) => {
+    e.preventDefault();
+    setBusy(true); setErr("");
+    try {
+      const s = await api("/api/finance/shift/open", { method: "POST", body: { opening_float: Number(float) || 0 } });
+      onOpened(s);
+    } catch (e) { setErr(e.message); setBusy(false); }
+  };
+  return (
+    <div className="flex h-[calc(100vh-7rem)] items-center justify-center">
+      <form onSubmit={open} className="card w-full max-w-sm p-8 text-center">
+        <span className="mx-auto grid h-14 w-14 place-items-center rounded-2xl bg-brand-100 text-brand-700 dark:bg-brand-900/40 dark:text-brand-300">
+          <Lock className="h-7 w-7" />
+        </span>
+        <h2 className="mt-4 font-display text-xl font-semibold text-sage-900 dark:text-sage-50">Open your till</h2>
+        <p className="mt-1 text-sm text-sage-500 dark:text-sage-400">
+          {cashier ? `${cashier.split(" ")[0]}, count` : "Count"} your starting cash float to begin selling.
+        </p>
+        <div className="mt-6 text-left">
+          <label className="label flex items-center gap-1.5"><Wallet className="h-4 w-4 text-brand-600" /> Opening cash float</label>
+          <input type="number" min="0" step="0.01" className="input text-lg" value={float} onChange={(e) => setFloat(e.target.value)} placeholder="0.00" autoFocus />
+        </div>
+        {err && <div className="mt-3 text-sm text-rose-600 dark:text-rose-400">{err}</div>}
+        <button type="submit" className="btn-primary mt-6 w-full !py-3" disabled={busy}>
+          {busy ? <Loader2 className="h-5 w-5 animate-spin" /> : <CheckCircle2 className="h-5 w-5" />} Open till & start selling
+        </button>
+      </form>
+    </div>
+  );
+}
