@@ -47,6 +47,17 @@ The backend serves the built frontend, so the whole app runs on the backend port
 
 **Default login (first boot):** `admin@remedy.local` / `admin123` — change this immediately.
 
+### Deploy / update
+
+Once configured, use the deploy script to pull, build and (re)start under PM2:
+
+```bash
+./deploy.sh            # pull latest, install, build, restart
+./deploy.sh --no-pull  # deploy local changes without pulling
+```
+
+See [CHANGELOG.md](CHANGELOG.md) for release notes.
+
 ## Project layout
 
 ```
