@@ -1,8 +1,10 @@
 import { useEffect, useMemo, useState } from "react";
 import { api } from "../lib/api.js";
+import { useAuth } from "../context/AuthContext.jsx";
+import { printLabels, baseWarnings } from "../lib/printing.js";
 import {
   ClipboardList, Plus, Search, Loader2, X, Trash2, ArrowLeft,
-  Stethoscope, User, CheckCircle2, Ban, Pill, RefreshCw,
+  Stethoscope, User, CheckCircle2, Ban, Pill, RefreshCw, Tag,
 } from "lucide-react";
 
 const STATUS = {
@@ -177,10 +179,26 @@ function RxForm({ onClose, onSaved }) {
 }
 
 function RxDetail({ id, onBack }) {
+  const { settings } = useAuth();
   const [rx, setRx] = useState(null);
   const [err, setErr] = useState("");
   const [busy, setBusy] = useState(false);
   const load = () => api(`/api/prescriptions/${id}`).then(setRx).catch((e) => setErr(e.message));
+
+  const printRxLabels = () => {
+    const labels = (rx.items || []).map((it) => ({
+      drug: it.drug_name,
+      directions: it.dosage,
+      qty: it.dispensed_qty || it.quantity,
+      warnings: baseWarnings(),
+    }));
+    printLabels(labels, {
+      patient_name: rx.patient_name,
+      prescriber_name: rx.prescriber_name,
+      rx_number: rx.rx_number,
+      date: rx.dispensed_at,
+    }, settings);
+  };
   useEffect(() => { load(); }, [id]);
 
   const act = async (path) => {
@@ -209,6 +227,7 @@ function RxDetail({ id, onBack }) {
           </div>
         </div>
         <div className="flex gap-2">
+          {rx.items?.length > 0 && <button className="btn-outline" onClick={printRxLabels}><Tag className="h-4 w-4" /> Print labels</button>}
           {rx.status === "pending" && <button className="btn-primary" disabled={busy} onClick={() => act("dispense")}><CheckCircle2 className="h-4 w-4" /> Dispense</button>}
           {canRefill && <button className="btn-primary" disabled={busy} onClick={() => act("dispense")}><RefreshCw className="h-4 w-4" /> Dispense refill</button>}
           {rx.status !== "dispensed" && rx.status !== "cancelled" && <button className="btn-outline text-rose-500" disabled={busy} onClick={() => act("cancel")}><Ban className="h-4 w-4" /> Cancel</button>}

@@ -1,11 +1,23 @@
-import { CheckCircle2, X, Printer } from "lucide-react";
+import { useState } from "react";
+import { CheckCircle2, X, Printer, Usb } from "lucide-react";
 import { money } from "../lib/money.js";
+import { printReceipt } from "../lib/printing.js";
+import { usbSupported, printReceiptUSB } from "../lib/escpos.js";
 
 // Shared receipt — used by POS (fresh sale) and Sales History (reprint).
 export default function ReceiptModal({ receipt, cashier, branch, settings, onClose, title = "Sale complete" }) {
   const name = settings?.pharmacy_name || "Remedy Pharmacy";
   const footer = settings?.receipt_footer || "Thank you — get well soon.";
   const taxPct = Number(settings?.tax_percent || 0);
+  const [usbErr, setUsbErr] = useState("");
+
+  const ctx = { cashier, branch };
+  const doPrint = () => printReceipt(receipt, settings, ctx);
+  const doUsb = async () => {
+    setUsbErr("");
+    try { await printReceiptUSB(receipt, settings, ctx); }
+    catch (e) { if (e?.name !== "NotFoundError") setUsbErr(e.message || "USB print failed"); }
+  };
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
@@ -68,10 +80,16 @@ export default function ReceiptModal({ receipt, cashier, branch, settings, onClo
           </div>
         </div>
 
+        {usbErr && <div className="px-4 pt-2 text-xs text-rose-600 dark:text-rose-400">{usbErr}</div>}
         <div className="flex gap-2 border-t border-sage-200 p-4 dark:border-sage-800">
-          <button onClick={() => window.print()} className="btn-outline flex-1">
+          <button onClick={doPrint} className="btn-outline flex-1">
             <Printer className="h-4 w-4" /> Print
           </button>
+          {usbSupported() && (
+            <button onClick={doUsb} className="btn-outline !px-3" title="Print direct to a USB thermal printer (ESC/POS)">
+              <Usb className="h-4 w-4" />
+            </button>
+          )}
           <button onClick={onClose} className="btn-primary flex-1">Close</button>
         </div>
       </div>

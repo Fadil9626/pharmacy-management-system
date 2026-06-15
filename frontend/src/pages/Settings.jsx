@@ -180,6 +180,23 @@ export default function Settings() {
               <Field label="Footer message">
                 <textarea className="input min-h-[64px]" value={f.receipt_footer || ""} onChange={set("receipt_footer")} disabled={!canEdit} />
               </Field>
+              <div className="grid grid-cols-2 gap-3">
+                <Field label="Thermal roll width">
+                  <select className="input" value={f.receipt_paper || "80"} onChange={set("receipt_paper")} disabled={!canEdit}>
+                    <option value="80">80 mm</option>
+                    <option value="58">58 mm</option>
+                  </select>
+                </Field>
+                <Field label="Dispensing label size">
+                  <select className="input" value={f.label_size || "50x30"} onChange={set("label_size")} disabled={!canEdit}>
+                    <option value="50x30">50 × 30 mm</option>
+                    <option value="40x60">40 × 60 mm</option>
+                    <option value="38x25">38 × 25 mm</option>
+                    <option value="70x40">70 × 40 mm</option>
+                  </select>
+                </Field>
+              </div>
+              <p className="text-xs text-sage-400">Receipts and labels print to these sizes — works with thermal/label printers and ordinary printers alike.</p>
             </Section>
             <ReceiptPreview f={f} />
           </div>
