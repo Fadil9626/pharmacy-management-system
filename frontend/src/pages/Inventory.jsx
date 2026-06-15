@@ -330,6 +330,7 @@ function ProductModal({ product, categories = [], onClose, onSaved }) {
     barcode: product?.barcode || "", reorder_level: product?.reorder_level ?? 10,
     is_controlled: product?.is_controlled || false,
     base_price: product?.base_price ?? "",
+    pack_size: product?.pack_size ?? 1, pack_label: product?.pack_label || "",
   });
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
@@ -382,6 +383,12 @@ function ProductModal({ product, categories = [], onClose, onSaved }) {
           <Field label="Reorder level">
             <input type="number" min="0" className="input" value={f.reorder_level} onChange={set("reorder_level")} />
           </Field>
+          <Field label={`Pack size (${f.unit || "unit"}s per pack)`}>
+            <input type="number" min="1" step="1" className="input" value={f.pack_size} onChange={set("pack_size")} placeholder="e.g. 100" />
+          </Field>
+          <Field label="Pack label">
+            <input className="input" value={f.pack_label} onChange={set("pack_label")} placeholder="e.g. Box of 100" />
+          </Field>
         </div>
         <Field label="Barcode">
           <input className="input" value={f.barcode} onChange={set("barcode")} />
@@ -416,12 +423,21 @@ function ProductModal({ product, categories = [], onClose, onSaved }) {
 }
 
 function ReceiveModal({ product, suppliers, onClose, onSaved }) {
+  const packSize = Math.max(1, Number(product.pack_size) || 1);
+  const hasPacks = packSize > 1;
+  const [byPack, setByPack] = useState(false);
   const [f, setF] = useState({
     batch_no: "", expiry_date: "", quantity: "", cost_price: "", selling_price: "", supplier_id: "",
   });
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
   const set = (k) => (e) => setF({ ...f, [k]: e.target.value });
+
+  const unitName = product.unit || "unit";
+  const qtyNum = Number(f.quantity) || 0;
+  const costNum = Number(f.cost_price) || 0;
+  const totalUnits = byPack ? qtyNum * packSize : qtyNum;
+  const perUnitCost = byPack && costNum ? costNum / packSize : costNum;
 
   const save = async (e) => {
     e.preventDefault();
@@ -438,6 +454,7 @@ function ReceiveModal({ product, suppliers, onClose, onSaved }) {
           cost_price: f.cost_price === "" ? null : Number(f.cost_price),
           selling_price: f.selling_price === "" ? null : Number(f.selling_price),
           supplier_id: f.supplier_id || null,
+          receive_by: byPack ? "pack" : "unit",
         },
       });
       onSaved();
@@ -450,8 +467,20 @@ function ReceiveModal({ product, suppliers, onClose, onSaved }) {
   return (
     <Modal title={`Receive stock · ${product.name}`} onClose={onClose}>
       <form onSubmit={save} className="space-y-4">
+        {hasPacks && (
+          <div className="flex rounded-xl border border-sage-200 p-1 text-sm dark:border-sage-800">
+            <button type="button" onClick={() => setByPack(false)}
+              className={"flex-1 rounded-lg px-3 py-1.5 font-medium transition " + (!byPack ? "bg-brand-600 text-white" : "text-sage-600 dark:text-sage-300")}>
+              By {unitName}
+            </button>
+            <button type="button" onClick={() => setByPack(true)}
+              className={"flex-1 rounded-lg px-3 py-1.5 font-medium transition " + (byPack ? "bg-brand-600 text-white" : "text-sage-600 dark:text-sage-300")}>
+              By pack {product.pack_label ? `(${product.pack_label})` : `(×${packSize})`}
+            </button>
+          </div>
+        )}
         <div className="grid grid-cols-2 gap-3">
-          <Field label="Quantity *">
+          <Field label={byPack ? "Packs *" : "Quantity *"}>
             <input type="number" min="1" className="input" value={f.quantity} onChange={set("quantity")} required autoFocus />
           </Field>
           <Field label="Batch no.">
@@ -468,13 +497,19 @@ function ReceiveModal({ product, suppliers, onClose, onSaved }) {
               ))}
             </select>
           </Field>
-          <Field label="Cost price">
+          <Field label={byPack ? "Cost per pack" : "Cost price"}>
             <input type="number" min="0" step="0.01" className="input" value={f.cost_price} onChange={set("cost_price")} />
           </Field>
-          <Field label="Selling price">
+          <Field label={`Selling price (per ${unitName})`}>
             <input type="number" min="0" step="0.01" className="input" value={f.selling_price} onChange={set("selling_price")} />
           </Field>
         </div>
+
+        {byPack && qtyNum > 0 && (
+          <div className="rounded-xl bg-sage-50 px-4 py-2.5 text-sm text-sage-600 dark:bg-sage-900 dark:text-sage-300">
+            Receiving <b>{totalUnits} {unitName}s</b>{costNum ? <> · cost <b>{money(perUnitCost)}</b> per {unitName}</> : null}
+          </div>
+        )}
 
         {err && <div className="text-sm text-rose-600 dark:text-rose-400">{err}</div>}
         <div className="flex justify-end gap-2 pt-2">

@@ -41,7 +41,9 @@ exports.listLite = async (req, res) => {
   const branchId = branchOf(req);
   try {
     const { rows } = await pool.query(
-      `SELECT p.id, p.name, p.unit, p.reorder_level,
+      `SELECT p.id, p.name, p.generic_name, p.category, p.category_id, p.dosage_form,
+              p.strength, p.unit, p.barcode, p.is_controlled, p.reorder_level, p.base_price,
+              p.pack_size, p.pack_label,
               COALESCE(s.qty, 0)::int   AS stock,
               COALESCE(s.cost, 0)::float  AS last_cost,
               COALESCE(s.price, 0)::float AS last_price
@@ -95,12 +97,14 @@ exports.importProducts = async (req, res) => {
         const catId = await resolveCategoryByName(r.category);
         const reorder = r.reorder_level != null && r.reorder_level !== "" ? Number(r.reorder_level) || reorderDefault : reorderDefault;
         const controlled = /^(1|true|yes|y)$/i.test(String(r.is_controlled || ""));
+        const packSize = Math.max(1, Number(r.pack_size) || 1);
         await pool.query(
-          `INSERT INTO products (name, generic_name, category, category_id, dosage_form, strength, unit, barcode, is_controlled, reorder_level, base_price)
-           VALUES ($1,$2,$3,$4,$5,$6,COALESCE(NULLIF($7,''),'unit'),$8,$9,$10,$11)`,
+          `INSERT INTO products (name, generic_name, category, category_id, dosage_form, strength, unit, barcode, is_controlled, reorder_level, base_price, pack_size, pack_label)
+           VALUES ($1,$2,$3,$4,$5,$6,COALESCE(NULLIF($7,''),'unit'),$8,$9,$10,$11,$12,$13)`,
           [name, r.generic_name || null, r.category || null, catId, r.dosage_form || null, r.strength || null,
            r.unit || null, r.barcode || null, controlled, reorder,
-           r.base_price != null && r.base_price !== "" ? Number(r.base_price) : null]
+           r.base_price != null && r.base_price !== "" ? Number(r.base_price) : null,
+           packSize, r.pack_label || null]
         );
         created++;
       } catch (e) {
@@ -123,7 +127,7 @@ async function resolveCategory(category_id, categoryText) {
 }
 
 exports.createProduct = async (req, res) => {
-  const { name, generic_name, category, category_id, dosage_form, strength, unit, barcode, is_controlled, reorder_level, base_price } = req.body || {};
+  const { name, generic_name, category, category_id, dosage_form, strength, unit, barcode, is_controlled, reorder_level, base_price, pack_size, pack_label } = req.body || {};
   if (!name) return res.status(400).json({ message: "Product name is required" });
   try {
     const cat = await resolveCategory(category_id, category);
@@ -131,12 +135,14 @@ exports.createProduct = async (req, res) => {
     const reorder = reorder_level != null && reorder_level !== ""
       ? Number(reorder_level)
       : Number(def.rows[0]?.low_stock_default || 10);
+    const pack = Math.max(1, Number(pack_size) || 1);
     const { rows } = await pool.query(
-      `INSERT INTO products (name, generic_name, category, category_id, dosage_form, strength, unit, barcode, is_controlled, reorder_level, base_price)
-       VALUES ($1,$2,$3,$4,$5,$6,COALESCE($7,'unit'),$8,COALESCE($9,false),$10,$11) RETURNING *`,
+      `INSERT INTO products (name, generic_name, category, category_id, dosage_form, strength, unit, barcode, is_controlled, reorder_level, base_price, pack_size, pack_label)
+       VALUES ($1,$2,$3,$4,$5,$6,COALESCE($7,'unit'),$8,COALESCE($9,false),$10,$11,$12,$13) RETURNING *`,
       [name, generic_name || null, cat.name, cat.id, dosage_form || null, strength || null,
        unit || null, barcode || null, is_controlled || false, reorder,
-       base_price !== "" && base_price != null ? Number(base_price) : null]
+       base_price !== "" && base_price != null ? Number(base_price) : null,
+       pack, pack_label || null]
     );
     res.status(201).json(rows[0]);
   } catch (e) {
@@ -146,19 +152,22 @@ exports.createProduct = async (req, res) => {
 
 exports.updateProduct = async (req, res) => {
   const id = Number(req.params.id);
-  const { name, generic_name, category, category_id, dosage_form, strength, unit, barcode, is_controlled, reorder_level, base_price } = req.body || {};
+  const { name, generic_name, category, category_id, dosage_form, strength, unit, barcode, is_controlled, reorder_level, base_price, pack_size, pack_label } = req.body || {};
   if (!name) return res.status(400).json({ message: "Product name is required" });
   try {
     const cat = await resolveCategory(category_id, category);
+    const pack = Math.max(1, Number(pack_size) || 1);
     const { rows } = await pool.query(
       `UPDATE products SET
          name=$1, generic_name=$2, category=$3, category_id=$4, dosage_form=$5, strength=$6,
          unit=COALESCE($7,'unit'), barcode=$8, is_controlled=COALESCE($9,false),
-         reorder_level=COALESCE($10,10), base_price=COALESCE($12, base_price)
+         reorder_level=COALESCE($10,10), base_price=COALESCE($12, base_price),
+         pack_size=$13, pack_label=$14
        WHERE id=$11 RETURNING *`,
       [name, generic_name || null, cat.name, cat.id, dosage_form || null, strength || null,
        unit || null, barcode || null, is_controlled || false, reorder_level || 10, id,
-       base_price !== "" && base_price != null ? Number(base_price) : null]
+       base_price !== "" && base_price != null ? Number(base_price) : null,
+       pack, pack_label || null]
     );
     if (!rows.length) return res.status(404).json({ message: "Product not found" });
     logAudit(req, "product_update", "product", id, { name: rows[0].name, base_price: rows[0].base_price, reorder_level: rows[0].reorder_level });
@@ -245,18 +254,28 @@ exports.listBatches = async (req, res) => {
 
 // Receive stock (opening stock / purchasing-lite).
 exports.receiveStock = async (req, res) => {
-  const { product_id, batch_no, expiry_date, quantity, cost_price, selling_price, supplier_id } = req.body || {};
+  const { product_id, batch_no, expiry_date, quantity, cost_price, selling_price, supplier_id, receive_by } = req.body || {};
   const branchId = effectiveBranch(req); // honor the active branch lens, not just the user's home branch
   if (!product_id || !quantity || quantity <= 0) {
     return res.status(400).json({ message: "Product and a positive quantity are required" });
   }
   if (!branchId) return res.status(400).json({ message: "No branch on this account" });
   try {
+    // Receiving by pack: the figures are per pack, so convert to base units —
+    // quantity × pack_size, and the per-pack cost spread across its units.
+    let qtyUnits = Number(quantity);
+    let unitCost = cost_price != null && cost_price !== "" ? Number(cost_price) : 0;
+    if (receive_by === "pack") {
+      const p = await pool.query("SELECT pack_size FROM products WHERE id = $1", [product_id]);
+      const packSize = Math.max(1, Number(p.rows[0]?.pack_size) || 1);
+      qtyUnits = Number(quantity) * packSize;
+      unitCost = Math.round((unitCost / packSize) * 10000) / 10000;
+    }
     const { rows } = await pool.query(
       `INSERT INTO product_batches (product_id, branch_id, supplier_id, batch_no, expiry_date, quantity, cost_price, selling_price)
-       VALUES ($1,$2,$3,$4,$5,$6,COALESCE($7,0),COALESCE($8,0)) RETURNING *`,
+       VALUES ($1,$2,$3,$4,$5,$6,COALESCE($7::numeric,0),COALESCE($8::numeric,0)) RETURNING *`,
       [product_id, branchId, supplier_id || null, batch_no || null, expiry_date || null,
-       quantity, cost_price, selling_price]
+       qtyUnits, unitCost, selling_price]
     );
     res.status(201).json(rows[0]);
   } catch (e) {
