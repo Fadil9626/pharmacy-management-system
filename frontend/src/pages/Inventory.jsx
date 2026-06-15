@@ -20,8 +20,8 @@ function Modal({ title, onClose, children }) {
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
       <div className="absolute inset-0 bg-sage-950/50 backdrop-blur-sm" onClick={onClose} />
-      <div className="card relative z-10 w-full max-w-lg p-6">
-        <div className="mb-5 flex items-center justify-between">
+      <div className="card relative z-10 flex max-h-[90vh] w-full max-w-lg flex-col p-6">
+        <div className="mb-5 flex shrink-0 items-center justify-between">
           <h3 className="font-display text-lg font-semibold text-sage-900 dark:text-sage-50">
             {title}
           </h3>
@@ -29,7 +29,9 @@ function Modal({ title, onClose, children }) {
             <X className="h-5 w-5" />
           </button>
         </div>
-        {children}
+        <div className="-mr-2 min-h-0 flex-1 overflow-y-auto pr-2">
+          {children}
+        </div>
       </div>
     </div>
   );
@@ -396,7 +398,7 @@ function ProductModal({ product, categories = [], onClose, onSaved }) {
           <Field label="Reorder level">
             <input type="number" min="0" className="input" value={f.reorder_level} onChange={set("reorder_level")} />
           </Field>
-          <Field label={`Pack size (${f.unit || "unit"}s per pack)`}>
+          <Field label="Units per pack">
             <input type="number" min="1" step="1" className="input" value={f.pack_size} onChange={set("pack_size")} placeholder="e.g. 100" />
           </Field>
           <Field label="Pack label">
