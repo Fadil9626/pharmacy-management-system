@@ -33,6 +33,7 @@ const stockCounts = require("./controllers/stockCountController");
 const purchasing = require("./controllers/purchasingController");
 const reports = require("./controllers/reportsController");
 const publicHealth = require("./controllers/publicHealthController");
+const notifications = require("./controllers/notificationsController");
 
 const app = express();
 app.use(cors());
@@ -119,6 +120,13 @@ app.put("/api/settings", protect, requirePermission("settings.manage"), settings
 // Audit log (owner/manager)
 app.get("/api/audit", protect, authorize("owner", "manager"), audit.list);
 
+// Notifications — outbox, channel config, test, and the alert scan
+app.get("/api/notifications", protect, authorize("owner", "manager"), notifications.list);
+app.get("/api/notifications/config", protect, authorize("owner", "manager"), notifications.getConfig);
+app.put("/api/notifications/config", protect, authorize("owner"), notifications.saveConfig);
+app.post("/api/notifications/test", protect, authorize("owner", "manager"), notifications.test);
+app.post("/api/notifications/run-alerts", protect, authorize("owner", "manager"), notifications.runAlerts);
+
 // Roles & permissions (owner only)
 app.get("/api/permissions", protect, authorize("owner", "manager"), permissions.list);
 app.put("/api/permissions/:role", protect, authorize("owner"), permissions.updateRole);
@@ -127,6 +135,7 @@ app.put("/api/permissions/:role", protect, authorize("owner"), permissions.updat
 app.get("/api/customers", protect, requireModule("customers"), customers.list);
 app.get("/api/customers/:id", protect, requireModule("customers"), customers.get);
 app.get("/api/customers/:id/statement", protect, requireModule("customers"), customers.statement);
+app.post("/api/customers/:id/statement/send", protect, requireModule("customers"), requirePermission("customers.payment"), customers.notifyStatement);
 app.post("/api/customers", protect, requireModule("customers"), requirePermission("customers.manage"), customers.create);
 app.patch("/api/customers/:id", protect, requireModule("customers"), requirePermission("customers.manage"), customers.update);
 app.post("/api/customers/:id/payment", protect, requireModule("customers"), requirePermission("customers.payment"), customers.recordPayment);

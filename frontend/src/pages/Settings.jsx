@@ -8,7 +8,7 @@ import {
 import {
   Loader2, Save, Store, Coins, Percent, ReceiptText, CheckCircle2,
   Boxes, Star, Blocks, Lock, Globe, Mail, Phone, MapPin,
-  Palette, ImagePlus, Trash2, Check,
+  Palette, ImagePlus, Trash2, Check, Bell, Send, Play, MessageSquare,
 } from "lucide-react";
 
 const FIELD_FALLBACK = {
@@ -29,6 +29,7 @@ const TABS = [
   { key: "sales", label: "Sales & Tax", icon: Percent },
   { key: "inventory", label: "Inventory", icon: Boxes },
   { key: "receipt", label: "Receipt", icon: ReceiptText },
+  { key: "notifications", label: "Notifications", icon: Bell },
   { key: "modules", label: "Modules", icon: Blocks },
 ];
 
@@ -184,11 +185,13 @@ export default function Settings() {
           </div>
         )}
 
+        {tab === "notifications" && <NotificationsTab isOwner={hasRole("owner")} />}
+
         {tab === "modules" && <ModulesPanel modules={modules} />}
 
         {err && <div className="card border-rose-200 p-3 text-sm text-rose-600 dark:border-rose-900/50 dark:text-rose-300">{err}</div>}
 
-        {canEdit && tab !== "modules" && (
+        {canEdit && tab !== "modules" && tab !== "notifications" && (
           <div className="flex items-center gap-3">
             <button type="submit" className="btn-primary" disabled={busy}>
               {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />} Save settings
@@ -218,6 +221,182 @@ function ReceiptPreview({ f }) {
         <div className="mt-3 whitespace-pre-line text-xs text-sage-400">{f.receipt_footer || "Thank you — get well soon."}</div>
       </div>
     </div>
+  );
+}
+
+const STATUS_CHIP = {
+  sent: "bg-brand-100 text-brand-700 dark:bg-brand-900/40 dark:text-brand-300",
+  logged: "bg-sage-100 text-sage-600 dark:bg-sage-800 dark:text-sage-300",
+  failed: "bg-rose-100 text-rose-700 dark:bg-rose-900/40 dark:text-rose-300",
+};
+const splitList = (s) => (s || "").split(/[\n,]+/).map((x) => x.trim()).filter(Boolean);
+
+function NotificationsTab({ isOwner }) {
+  const [cfg, setCfg] = useState(null);
+  const [emailsText, setEmailsText] = useState("");
+  const [phonesText, setPhonesText] = useState("");
+  const [log, setLog] = useState([]);
+  const [busy, setBusy] = useState(false);
+  const [saved, setSaved] = useState(false);
+  const [err, setErr] = useState("");
+  const [test, setTest] = useState({ channel: "email", to: "" });
+  const [runResult, setRunResult] = useState(null);
+
+  const loadLog = () => api("/api/notifications").then(setLog).catch(() => {});
+  useEffect(() => {
+    api("/api/notifications/config").then((c) => {
+      setCfg(c);
+      setEmailsText((c.recipients?.emails || []).join(", "));
+      setPhonesText((c.recipients?.phones || []).join(", "));
+    }).catch((e) => setErr(e.message));
+    loadLog();
+  }, []);
+
+  if (!cfg) return <div className="flex h-32 items-center justify-center text-sage-400"><Loader2 className="h-5 w-5 animate-spin" /></div>;
+
+  const setCh = (ch, k) => (e) => setCfg({ ...cfg, [ch]: { ...cfg[ch], [k]: e.target.type === "checkbox" ? e.target.checked : e.target.value } });
+  const setEvent = (k) => (e) => setCfg({ ...cfg, events: { ...cfg.events, [k]: e.target.checked } });
+
+  const save = async () => {
+    setBusy(true); setErr(""); setSaved(false);
+    try {
+      const body = {
+        email: { enabled: cfg.email.enabled, api_url: cfg.email.api_url, from: cfg.email.from, ...(cfg.email.api_key ? { api_key: cfg.email.api_key } : {}) },
+        sms: { enabled: cfg.sms.enabled, api_url: cfg.sms.api_url, sender: cfg.sms.sender, ...(cfg.sms.api_key ? { api_key: cfg.sms.api_key } : {}) },
+        events: cfg.events,
+        recipients: { emails: splitList(emailsText), phones: splitList(phonesText) },
+        dedupe_hours: Number(cfg.dedupe_hours) || 0,
+      };
+      const c = await api("/api/notifications/config", { method: "PUT", body });
+      setCfg({ ...c, email: { ...c.email, api_key: "" }, sms: { ...c.sms, api_key: "" } });
+      setSaved(true); setTimeout(() => setSaved(false), 2500);
+    } catch (e) { setErr(e.message); } finally { setBusy(false); }
+  };
+
+  const sendTest = async () => {
+    setErr("");
+    if (!test.to) { setErr("Enter a recipient to test."); return; }
+    try { await api("/api/notifications/test", { method: "POST", body: test }); loadLog(); }
+    catch (e) { setErr(e.message); }
+  };
+
+  const runAlerts = async () => {
+    setErr(""); setRunResult(null); setBusy(true);
+    try { setRunResult(await api("/api/notifications/run-alerts", { method: "POST" })); loadLog(); }
+    catch (e) { setErr(e.message); } finally { setBusy(false); }
+  };
+
+  const Channel = ({ ch, label, icon: Icon, idField, idLabel }) => (
+    <div className="rounded-xl border border-sage-200 p-4 dark:border-sage-800">
+      <label className="flex items-center gap-2.5 font-medium text-sage-800 dark:text-sage-100">
+        <input type="checkbox" checked={cfg[ch].enabled} onChange={setCh(ch, "enabled")} disabled={!isOwner}
+          className="h-4 w-4 rounded border-sage-300 text-brand-600 focus:ring-brand-500" />
+        <Icon className="h-4 w-4 text-brand-600" /> {label}
+      </label>
+      <div className="mt-3 grid gap-3 sm:grid-cols-2">
+        <Field label="Provider API URL">
+          <input className="input" value={cfg[ch].api_url} onChange={setCh(ch, "api_url")} disabled={!isOwner} placeholder="https://api.gateway.com/send" />
+        </Field>
+        <Field label={idLabel}>
+          <input className="input" value={cfg[ch][idField]} onChange={setCh(ch, idField)} disabled={!isOwner} />
+        </Field>
+        <Field label={`API key ${cfg[ch].api_key_set ? "(saved — leave blank to keep)" : ""}`}>
+          <input type="password" className="input" value={cfg[ch].api_key || ""} onChange={setCh(ch, "api_key")} disabled={!isOwner}
+            placeholder={cfg[ch].api_key_set ? "•••••••• saved" : "Bearer token"} />
+        </Field>
+      </div>
+    </div>
+  );
+
+  return (
+    <Section icon={Bell} title="Notifications" hint="Alert staff and customers by email / SMS. Messages are always logged; they're delivered when a provider is configured.">
+      <div className="space-y-4">
+        <Channel ch="email" label="Email" icon={Mail} idField="from" idLabel="From address" />
+        <Channel ch="sms" label="SMS" icon={MessageSquare} idField="sender" idLabel="Sender ID" />
+
+        <div className="rounded-xl border border-sage-200 p-4 dark:border-sage-800">
+          <div className="font-medium text-sage-800 dark:text-sage-100">Automatic alerts</div>
+          <div className="mt-3 flex flex-wrap gap-4">
+            {[["low_stock", "Low stock"], ["near_expiry", "Near expiry"], ["refill_due", "Refill reminders"]].map(([k, lbl]) => (
+              <label key={k} className="flex items-center gap-2 text-sm text-sage-700 dark:text-sage-300">
+                <input type="checkbox" checked={!!cfg.events[k]} onChange={setEvent(k)} disabled={!isOwner}
+                  className="h-4 w-4 rounded border-sage-300 text-brand-600 focus:ring-brand-500" /> {lbl}
+              </label>
+            ))}
+          </div>
+          <div className="mt-4 grid gap-3 sm:grid-cols-2">
+            <Field label="Alert emails (comma-separated)">
+              <input className="input" value={emailsText} onChange={(e) => setEmailsText(e.target.value)} disabled={!isOwner} placeholder="manager@pharmacy.com" />
+            </Field>
+            <Field label="Alert phones (comma-separated)">
+              <input className="input" value={phonesText} onChange={(e) => setPhonesText(e.target.value)} disabled={!isOwner} placeholder="+232..." />
+            </Field>
+            <Field label="Don't repeat the same alert within (hours)">
+              <input type="number" min="0" className="input" value={cfg.dedupe_hours} onChange={(e) => setCfg({ ...cfg, dedupe_hours: e.target.value })} disabled={!isOwner} />
+            </Field>
+          </div>
+          <p className="mt-2 text-xs text-sage-400">If no recipients are set, alerts fall back to the pharmacy email/phone in Business settings.</p>
+        </div>
+
+        {isOwner && (
+          <div className="flex items-center gap-3">
+            <button type="button" onClick={save} className="btn-primary" disabled={busy}>
+              {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />} Save notifications
+            </button>
+            {saved && <span className="flex items-center gap-1 text-sm font-medium text-brand-600 dark:text-brand-400"><CheckCircle2 className="h-4 w-4" /> Saved</span>}
+          </div>
+        )}
+
+        {/* Test + run */}
+        <div className="rounded-xl border border-sage-200 p-4 dark:border-sage-800">
+          <div className="font-medium text-sage-800 dark:text-sage-100">Try it</div>
+          <div className="mt-3 flex flex-wrap items-end gap-2">
+            <Field label="Channel">
+              <select className="input !w-28" value={test.channel} onChange={(e) => setTest({ ...test, channel: e.target.value })}>
+                <option value="email">Email</option><option value="sms">SMS</option>
+              </select>
+            </Field>
+            <Field label="Recipient">
+              <input className="input" value={test.to} onChange={(e) => setTest({ ...test, to: e.target.value })} placeholder={test.channel === "email" ? "you@example.com" : "+232..."} />
+            </Field>
+            <button type="button" onClick={sendTest} className="btn-outline"><Send className="h-4 w-4" /> Send test</button>
+            <div className="flex-1" />
+            <button type="button" onClick={runAlerts} className="btn-outline" disabled={busy}><Play className="h-4 w-4" /> Run alerts now</button>
+          </div>
+          {runResult && (
+            <p className="mt-3 text-sm text-sage-600 dark:text-sage-300">
+              Scan found <b>{runResult.low_stock}</b> low-stock, <b>{runResult.near_expiry}</b> near-expiry, <b>{runResult.refill_due}</b> refill-due · <b>{runResult.sent}</b> message(s) emitted.
+            </p>
+          )}
+        </div>
+
+        {err && <div className="text-sm text-rose-600 dark:text-rose-400">{err}</div>}
+
+        {/* Outbox */}
+        <div>
+          <div className="mb-2 text-xs font-medium uppercase tracking-wide text-sage-400">Recent messages</div>
+          {log.length === 0 ? (
+            <p className="text-sm text-sage-400">No notifications yet.</p>
+          ) : (
+            <div className="max-h-72 overflow-y-auto rounded-xl border border-sage-200 dark:border-sage-800">
+              <table className="w-full text-sm">
+                <tbody className="divide-y divide-sage-100 dark:divide-sage-800">
+                  {log.map((n) => (
+                    <tr key={n.id} className="hover:bg-sage-50/60 dark:hover:bg-sage-900/40">
+                      <td className="px-3 py-2 text-sage-400 whitespace-nowrap">{new Date(n.created_at).toLocaleString()}</td>
+                      <td className="px-3 py-2"><span className="chip bg-sage-100 capitalize text-sage-600 dark:bg-sage-800 dark:text-sage-300">{n.type.replace(/_/g, " ")}</span></td>
+                      <td className="px-3 py-2 text-sage-500">{n.channel}</td>
+                      <td className="px-3 py-2 text-sage-700 dark:text-sage-200">{n.recipient || "—"}</td>
+                      <td className="px-3 py-2 text-right"><span className={`chip capitalize ${STATUS_CHIP[n.status] || ""}`}>{n.status}</span></td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      </div>
+    </Section>
   );
 }
 

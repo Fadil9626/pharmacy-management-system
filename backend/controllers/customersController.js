@@ -1,4 +1,40 @@
 const pool = require("../config/db");
+const { notify } = require("../lib/notify");
+
+// Email/SMS a statement summary to a customer on demand.
+exports.notifyStatement = async (req, res) => {
+  const id = Number(req.params.id);
+  const { channel } = req.body || {};
+  if (!["email", "sms"].includes(channel)) return res.status(400).json({ message: "channel must be email or sms" });
+  try {
+    const c = (await pool.query("SELECT name, email, phone, balance FROM customers WHERE id = $1", [id])).rows[0];
+    if (!c) return res.status(404).json({ message: "Customer not found" });
+    const to = req.body.to || (channel === "email" ? c.email : c.phone);
+    if (!to) return res.status(400).json({ message: `No ${channel} on file for this customer` });
+
+    const since = "90 days";
+    const charges = (await pool.query(
+      `SELECT COALESCE(SUM(sp.amount),0)::numeric AS total, COUNT(DISTINCT s.id)::int AS n
+       FROM sales s JOIN sale_payments sp ON sp.sale_id = s.id AND sp.method = 'account'
+       WHERE s.customer_id = $1 AND s.created_at > NOW() - $2::interval`, [id, since])).rows[0];
+    const pays = (await pool.query(
+      `SELECT COALESCE(SUM(amount),0)::numeric AS total, COUNT(*)::int AS n
+       FROM customer_payments WHERE customer_id = $1 AND created_at > NOW() - $2::interval`, [id, since])).rows[0];
+
+    const sName = (await pool.query("SELECT pharmacy_name, currency_symbol FROM settings WHERE id = 1")).rows[0] || {};
+    const sym = sName.currency_symbol || "";
+    const body =
+      `Account statement — ${sName.pharmacy_name || "Remedy"}\n` +
+      `Customer: ${c.name}\n` +
+      `Last 90 days: ${charges.n} charge(s) ${sym}${Number(charges.total).toFixed(2)}, ${pays.n} payment(s) ${sym}${Number(pays.total).toFixed(2)}\n` +
+      `Current balance owed: ${sym}${Number(c.balance).toFixed(2)}`;
+
+    const row = await notify({ channel, to, type: "statement", subject: `Your account statement — ${sName.pharmacy_name || "Remedy"}`, body, ref_type: "customer", ref_id: id });
+    res.status(201).json(row);
+  } catch (e) {
+    res.status(500).json({ message: e.message });
+  }
+};
 
 exports.list = async (req, res) => {
   const q = (req.query.q || "").trim().toLowerCase();

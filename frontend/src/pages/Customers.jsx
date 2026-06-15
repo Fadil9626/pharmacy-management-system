@@ -4,7 +4,7 @@ import { money, num } from "../lib/money.js";
 import { downloadCSV } from "../lib/csv.js";
 import {
   Users, Plus, Search, Loader2, X, Phone, Mail, Wallet, Star,
-  ArrowLeft, HandCoins, Receipt, CreditCard, FileText, Printer, Download,
+  ArrowLeft, HandCoins, Receipt, CreditCard, FileText, Printer, Download, Send, Check,
 } from "lucide-react";
 
 export default function Customers() {
@@ -280,6 +280,18 @@ function StatementModal({ customer, onClose }) {
   const [data, setData] = useState(null);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
+  const [sending, setSending] = useState(false);
+  const [sent, setSent] = useState("");
+
+  const sendStatement = async (channel) => {
+    setSending(true); setErr(""); setSent("");
+    try {
+      const r = await api(`/api/customers/${customer.id}/statement/send`, { method: "POST", body: { channel } });
+      setSent(`Statement ${r.status === "sent" ? "sent" : "queued"} to ${r.recipient} via ${channel}.`);
+      setTimeout(() => setSent(""), 4000);
+    } catch (e) { setErr(e.message); }
+    finally { setSending(false); }
+  };
 
   const run = async () => {
     setBusy(true); setErr("");
@@ -346,9 +358,12 @@ function StatementModal({ customer, onClose }) {
           <button className="btn-outline" onClick={run} disabled={busy}>{busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Search className="h-4 w-4" />} Apply</button>
           <div className="flex-1" />
           <button className="btn-outline" onClick={exportCsv} disabled={!data?.lines?.length}><Download className="h-4 w-4" /> CSV</button>
+          {customer.email && <button className="btn-outline" onClick={() => sendStatement("email")} disabled={sending} title={`Email to ${customer.email}`}><Mail className="h-4 w-4" /> Email</button>}
+          {customer.phone && <button className="btn-outline" onClick={() => sendStatement("sms")} disabled={sending} title={`SMS to ${customer.phone}`}><Send className="h-4 w-4" /> SMS</button>}
           <button className="btn-primary" onClick={print} disabled={!data}><Printer className="h-4 w-4" /> Print</button>
         </div>
 
+        {sent && <div className="mb-3 flex items-center gap-1.5 text-sm font-medium text-brand-600 dark:text-brand-400"><Check className="h-4 w-4" /> {sent}</div>}
         {err && <div className="mb-3 text-sm text-rose-600 dark:text-rose-400">{err}</div>}
 
         {data && (

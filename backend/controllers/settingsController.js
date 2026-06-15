@@ -4,7 +4,12 @@ const { logAudit } = require("../lib/audit");
 exports.get = async (_req, res) => {
   try {
     const { rows } = await pool.query("SELECT * FROM settings WHERE id = 1");
-    res.json(rows[0] || {});
+    const s = rows[0] || {};
+    // /api/settings is readable by every authenticated user (drives currency,
+    // branding, etc.) — never ship notification provider secrets here. Manage
+    // them via the owner-only /api/notifications/config endpoint.
+    delete s.notify_config;
+    res.json(s);
   } catch (e) {
     res.status(500).json({ message: e.message });
   }
