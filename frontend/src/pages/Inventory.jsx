@@ -7,6 +7,7 @@ import ConfirmModal from "../components/Confirm.jsx";
 import {
   Search, Plus, PackagePlus, X, Loader2, AlertTriangle, CalendarClock,
   Boxes, ShieldAlert, Pencil, Layers, Trash2, SlidersHorizontal, Upload, Download, CheckCircle2, FileSpreadsheet,
+  ClipboardCheck,
 } from "lucide-react";
 
 const monthsUntil = (d) => {
@@ -63,6 +64,7 @@ export default function Inventory() {
   const [catFilter, setCatFilter] = useState("");
   const [showCategories, setShowCategories] = useState(false);
   const [showImport, setShowImport] = useState(false);
+  const [showCount, setShowCount] = useState(false);
   const [showProduct, setShowProduct] = useState(false);
   const [editFor, setEditFor] = useState(null);
   const [receiveFor, setReceiveFor] = useState(null);
@@ -114,6 +116,11 @@ export default function Inventory() {
           {can("inventory.categories") && (
             <button className="btn-outline" onClick={() => setShowCategories(true)}>
               <Layers className="h-4 w-4" /> Categories
+            </button>
+          )}
+          {can("inventory.adjust") && (
+            <button className="btn-outline" onClick={() => setShowCount(true)}>
+              <ClipboardCheck className="h-4 w-4" /> Stock-take
             </button>
           )}
           {can("inventory.manage") && (
@@ -278,6 +285,9 @@ export default function Inventory() {
       )}
       {showImport && (
         <ImportModal onClose={() => setShowImport(false)} onDone={() => { load(); loadCats(); }} />
+      )}
+      {showCount && (
+        <StockCountModal products={products || []} onClose={() => setShowCount(false)} onDone={() => { setShowCount(false); load(); }} />
       )}
       {confirmDeactivate && (
         <ConfirmModal danger title="Deactivate product" confirmLabel="Deactivate"
@@ -821,5 +831,147 @@ function AdjustModal({ batch, onClose, onSaved }) {
         </div>
       </form>
     </Modal>
+  );
+}
+
+// Physical count: enter what's on the shelf, the system reconciles the difference.
+// Leave a product blank to skip it (no change). Only counted rows are submitted.
+function StockCountModal({ products, onClose, onDone }) {
+  const [q, setQ] = useState("");
+  const [counts, setCounts] = useState({}); // product_id -> string
+  const [note, setNote] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+  const [result, setResult] = useState(null);
+
+  const list = useMemo(() => {
+    const t = q.trim().toLowerCase();
+    const base = t
+      ? products.filter((p) => [p.name, p.generic_name, p.barcode].filter(Boolean).some((v) => String(v).toLowerCase().includes(t)))
+      : products;
+    return base.slice(0, 200);
+  }, [products, q]);
+
+  const entered = useMemo(
+    () => Object.entries(counts).filter(([, v]) => v !== "" && v != null && !Number.isNaN(Number(v))),
+    [counts]
+  );
+  const discrepancies = entered.filter(([pid, v]) => {
+    const p = products.find((x) => String(x.id) === String(pid));
+    return p && Number(v) !== Number(p.stock);
+  }).length;
+
+  const submit = async (e) => {
+    e.preventDefault();
+    setErr("");
+    if (!entered.length) { setErr("Enter a counted quantity for at least one product."); return; }
+    setBusy(true);
+    try {
+      const items = entered.map(([product_id, counted_qty]) => ({ product_id: Number(product_id), counted_qty: Number(counted_qty) }));
+      const r = await api("/api/stock-counts", { method: "POST", body: { items, note: note || null } });
+      setResult(r);
+    } catch (e2) {
+      setErr(e2.message || "Could not post the count.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+      <div className="absolute inset-0 bg-sage-950/50 backdrop-blur-sm" onClick={onClose} />
+      <div className="card relative z-10 flex max-h-[88vh] w-full max-w-3xl flex-col p-6">
+        <div className="mb-4 flex items-center justify-between">
+          <div>
+            <h3 className="font-display text-lg font-semibold text-sage-900 dark:text-sage-50">Stock-take</h3>
+            <p className="mt-0.5 text-sm text-sage-500 dark:text-sage-400">
+              Count the shelf, enter the figure — the system corrects the difference. Blank = skip.
+            </p>
+          </div>
+          <button onClick={onClose} className="btn-ghost !px-2 !py-2"><X className="h-5 w-5" /></button>
+        </div>
+
+        {result ? (
+          <div className="space-y-4 py-6 text-center">
+            <CheckCircle2 className="mx-auto h-12 w-12 text-brand-500" />
+            <div>
+              <div className="font-display text-lg font-semibold text-sage-900 dark:text-sage-50">Count posted</div>
+              <p className="mt-1 text-sm text-sage-500 dark:text-sage-400">
+                {result.items_counted} product{result.items_counted === 1 ? "" : "s"} counted ·
+                stock value change {money(result.variance_value)}
+              </p>
+            </div>
+            <button className="btn-primary mx-auto" onClick={onDone}>Done</button>
+          </div>
+        ) : (
+          <form onSubmit={submit} className="flex min-h-0 flex-1 flex-col">
+            <div className="relative mb-3">
+              <Search className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-sage-400" />
+              <input className="input pl-10" placeholder="Filter products to count…" value={q} onChange={(e) => setQ(e.target.value)} />
+            </div>
+
+            <div className="min-h-0 flex-1 overflow-y-auto rounded-xl border border-sage-200 dark:border-sage-800">
+              <table className="w-full text-sm">
+                <thead className="sticky top-0 bg-sage-50 text-xs uppercase tracking-wide text-sage-500 dark:bg-sage-900 dark:text-sage-400">
+                  <tr>
+                    <th className="px-3 py-2 text-left font-medium">Product</th>
+                    <th className="px-3 py-2 text-right font-medium">System</th>
+                    <th className="px-3 py-2 text-right font-medium">Counted</th>
+                    <th className="px-3 py-2 text-right font-medium">Variance</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-sage-100 dark:divide-sage-800">
+                  {list.length === 0 && (
+                    <tr><td colSpan={4} className="px-3 py-8 text-center text-sage-400">No products match "{q}".</td></tr>
+                  )}
+                  {list.map((p) => {
+                    const raw = counts[p.id];
+                    const has = raw !== "" && raw != null && !Number.isNaN(Number(raw));
+                    const v = has ? Number(raw) - Number(p.stock) : null;
+                    return (
+                      <tr key={p.id} className="hover:bg-sage-50/60 dark:hover:bg-sage-900/40">
+                        <td className="px-3 py-1.5">
+                          <div className="font-medium text-sage-800 dark:text-sage-100">{p.name}</div>
+                          {p.generic_name && <div className="text-xs text-sage-400">{p.generic_name}</div>}
+                        </td>
+                        <td className="px-3 py-1.5 text-right tabular-nums text-sage-600 dark:text-sage-300">{p.stock}</td>
+                        <td className="px-3 py-1.5 text-right">
+                          <input
+                            type="number" min="0" inputMode="numeric"
+                            className="input !w-24 !py-1 text-right"
+                            value={raw ?? ""}
+                            onChange={(e) => setCounts((c) => ({ ...c, [p.id]: e.target.value }))}
+                            placeholder="—"
+                          />
+                        </td>
+                        <td className={"px-3 py-1.5 text-right tabular-nums font-medium " + (v == null ? "text-sage-300" : v === 0 ? "text-sage-400" : v > 0 ? "text-brand-600 dark:text-brand-400" : "text-rose-600 dark:text-rose-400")}>
+                          {v == null ? "—" : v > 0 ? `+${v}` : v}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+
+            <div className="mt-3 space-y-3">
+              <input className="input" value={note} onChange={(e) => setNote(e.target.value)} placeholder="Note (optional) — e.g. monthly count, aisle 3" />
+              {err && <div className="text-sm text-rose-600 dark:text-rose-400">{err}</div>}
+              <div className="flex items-center justify-between gap-3">
+                <div className="text-sm text-sage-500 dark:text-sage-400">
+                  {entered.length} counted · <span className={discrepancies ? "font-medium text-amber-600 dark:text-amber-400" : ""}>{discrepancies} discrepanc{discrepancies === 1 ? "y" : "ies"}</span>
+                </div>
+                <div className="flex gap-2">
+                  <button type="button" className="btn-outline" onClick={onClose}>Cancel</button>
+                  <button type="submit" className="btn-primary" disabled={busy || !entered.length}>
+                    {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <ClipboardCheck className="h-4 w-4" />} Post count
+                  </button>
+                </div>
+              </div>
+            </div>
+          </form>
+        )}
+      </div>
+    </div>
   );
 }

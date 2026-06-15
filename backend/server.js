@@ -29,6 +29,7 @@ const controlled = require("./controllers/controlledController");
 const finance = require("./controllers/financeController");
 const branches = require("./controllers/branchesController");
 const transfers = require("./controllers/transfersController");
+const stockCounts = require("./controllers/stockCountController");
 const purchasing = require("./controllers/purchasingController");
 const reports = require("./controllers/reportsController");
 
@@ -84,6 +85,9 @@ app.delete("/api/products/:id", protect, requireModule("inventory"), requirePerm
 app.get("/api/batches", protect, requireModule("inventory"), catalog.listBatches);
 app.post("/api/stock/receive", protect, requireModule("inventory"), requirePermission("inventory.receive"), catalog.receiveStock);
 app.post("/api/stock/adjust", protect, requireModule("inventory"), requirePermission("inventory.adjust"), catalog.adjustStock);
+app.get("/api/stock-counts", protect, requireModule("inventory"), stockCounts.list);
+app.get("/api/stock-counts/:id", protect, requireModule("inventory"), stockCounts.get);
+app.post("/api/stock-counts", protect, requireModule("inventory"), requirePermission("inventory.adjust"), stockCounts.create);
 app.get("/api/suppliers", protect, catalog.listSuppliers);
 app.get("/api/catalog/lite", protect, catalog.listLite);
 
