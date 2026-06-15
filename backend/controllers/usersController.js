@@ -1,6 +1,7 @@
 const bcrypt = require("bcryptjs");
 const pool = require("../config/db");
 const { logAudit } = require("../lib/audit");
+const { validatePassword } = require("../lib/passwordPolicy");
 
 const ROLES = ["owner", "manager", "pharmacist", "cashier"];
 
@@ -22,8 +23,8 @@ exports.create = async (req, res) => {
   const { full_name, email, password, role, branch_id } = req.body || {};
   if (!full_name || !email || !password)
     return res.status(400).json({ message: "Name, email and password are required" });
-  if (password.length < 6)
-    return res.status(400).json({ message: "Password must be at least 6 characters" });
+  const pwErr = validatePassword(password);
+  if (pwErr) return res.status(400).json({ message: pwErr });
   if (role && !ROLES.includes(role))
     return res.status(400).json({ message: "Invalid role" });
   // Only an owner may mint another owner.
@@ -77,8 +78,8 @@ exports.update = async (req, res) => {
 exports.resetPassword = async (req, res) => {
   const id = Number(req.params.id);
   const { password } = req.body || {};
-  if (!password || password.length < 6)
-    return res.status(400).json({ message: "Password must be at least 6 characters" });
+  const pwErr = validatePassword(password);
+  if (pwErr) return res.status(400).json({ message: pwErr });
   try {
     const hash = await bcrypt.hash(password, 10);
     const { rowCount } = await pool.query("UPDATE users SET password_hash = $1 WHERE id = $2", [hash, id]);

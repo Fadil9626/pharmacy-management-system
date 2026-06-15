@@ -339,7 +339,7 @@ function AddModal({ onClose, onSaved, canMintOwner }) {
       <form onSubmit={save} className="space-y-4">
         <div><label className="label">Full name</label><input className="input" value={f.full_name} onChange={set("full_name")} required autoFocus /></div>
         <div><label className="label">Email</label><input type="email" className="input" value={f.email} onChange={set("email")} required /></div>
-        <div><label className="label">Temporary password</label><input className="input" value={f.password} onChange={set("password")} required minLength={6} placeholder="Min 6 characters" /></div>
+        <div><label className="label">Temporary password</label><input className="input" value={f.password} onChange={set("password")} required minLength={8} placeholder="Min 8 chars, letters & numbers" /></div>
         <div><label className="label">Role</label><RoleSelect value={f.role} onChange={set("role")} canMintOwner={canMintOwner} /></div>
         {err && <div className="text-sm text-rose-600 dark:text-rose-400">{err}</div>}
         <div className="flex justify-end gap-2"><button type="button" className="btn-outline" onClick={onClose}>Cancel</button>
@@ -389,7 +389,7 @@ function PasswordModal({ u, onClose, onSaved }) {
         <div className="flex items-center gap-2 py-4 text-brand-600 dark:text-brand-400"><CheckCircle2 className="h-5 w-5" /> Password updated.</div>
       ) : (
         <form onSubmit={save} className="space-y-4">
-          <div><label className="label">New password</label><input className="input" value={pw} onChange={(e) => setPw(e.target.value)} required minLength={6} placeholder="Min 6 characters" autoFocus /></div>
+          <div><label className="label">New password</label><input className="input" value={pw} onChange={(e) => setPw(e.target.value)} required minLength={8} placeholder="Min 8 chars, letters & numbers" autoFocus /></div>
           {err && <div className="text-sm text-rose-600 dark:text-rose-400">{err}</div>}
           <div className="flex justify-end gap-2"><button type="button" className="btn-outline" onClick={onClose}>Cancel</button>
             <button type="submit" className="btn-primary" disabled={busy}>{busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <KeyRound className="h-4 w-4" />} Set password</button></div>

@@ -37,6 +37,20 @@ const app = express();
 app.use(cors());
 app.use(express.json({ limit: "2mb" }));
 
+// Baseline security headers (no extra deps).
+app.use((req, res, next) => {
+  res.set("X-Content-Type-Options", "nosniff");
+  res.set("X-Frame-Options", "SAMEORIGIN");
+  res.set("Referrer-Policy", "strict-origin-when-cross-origin");
+  res.set("X-XSS-Protection", "0");
+  next();
+});
+
+if (!process.env.JWT_SECRET) {
+  console.error("❌ JWT_SECRET is not set — refusing to start. Set it in backend/.env");
+  process.exit(1);
+}
+
 // ── Migrations + default admin on boot ──────────────────────
 (async () => {
   try {

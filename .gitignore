@@ -30,3 +30,6 @@ Thumbs.db
 # Misc
 coverage/
 *.local
+
+# Database backups
+backups/
