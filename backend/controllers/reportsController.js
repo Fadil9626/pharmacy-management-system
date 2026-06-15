@@ -19,7 +19,7 @@ exports.sales = async (req, res) => {
   const branchId = branchOf(req);
   const { from, to } = range(req);
   try {
-    const [summary, refunds, cogs, byDay, byPayment, top] = await Promise.all([
+    const [summary, refunds, cogs, byDay, byPayment, top, byCategory, byStaff, byHour] = await Promise.all([
       pool.query(
         `SELECT COUNT(*)::int AS txns,
                 COALESCE(SUM(total), 0)::float    AS revenue,
@@ -75,6 +75,35 @@ exports.sales = async (req, res) => {
          ORDER BY revenue DESC LIMIT 8`,
         [from, to, branchId]
       ),
+      // by category
+      pool.query(
+        `SELECT COALESCE(c.name, 'Uncategorised') AS category,
+                SUM(si.qty)::int AS qty, COALESCE(SUM(si.line_total),0)::float AS revenue
+         FROM sale_items si JOIN sales s ON si.sale_id = s.id
+         LEFT JOIN products p ON si.product_id = p.id
+         LEFT JOIN categories c ON p.category_id = c.id
+         WHERE s.created_at::date BETWEEN $1 AND $2 AND ($3::int IS NULL OR s.branch_id = $3)
+         GROUP BY COALESCE(c.name, 'Uncategorised') ORDER BY revenue DESC`,
+        [from, to, branchId]
+      ),
+      // by staff (cashier)
+      pool.query(
+        `SELECT COALESCE(u.full_name, '—') AS staff, COUNT(*)::int AS txns,
+                COALESCE(SUM(s.total),0)::float AS revenue
+         FROM sales s LEFT JOIN users u ON s.user_id = u.id
+         WHERE s.created_at::date BETWEEN $1 AND $2 AND ($3::int IS NULL OR s.branch_id = $3)
+         GROUP BY COALESCE(u.full_name, '—') ORDER BY revenue DESC`,
+        [from, to, branchId]
+      ),
+      // by hour of day
+      pool.query(
+        `SELECT EXTRACT(HOUR FROM created_at)::int AS hour, COUNT(*)::int AS txns,
+                COALESCE(SUM(total),0)::float AS revenue
+         FROM sales
+         WHERE created_at::date BETWEEN $1 AND $2 AND ($3::int IS NULL OR branch_id = $3)
+         GROUP BY hour ORDER BY hour`,
+        [from, to, branchId]
+      ),
     ]);
 
     const s = summary.rows[0];
@@ -101,6 +130,9 @@ exports.sales = async (req, res) => {
       by_day: byDay.rows,
       by_payment: byPayment.rows,
       top_products: top.rows,
+      by_category: byCategory.rows,
+      by_staff: byStaff.rows,
+      by_hour: byHour.rows,
     });
   } catch (e) {
     res.status(500).json({ message: e.message });

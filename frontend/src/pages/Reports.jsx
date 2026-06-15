@@ -3,8 +3,19 @@ import { api } from "../lib/api.js";
 import {
   TrendingUp, Wallet, Receipt, Percent, Loader2, CalendarClock,
   Boxes, Banknote, CreditCard, Smartphone, Trophy, AlertTriangle,
+  Download, Tag, UserRound, Clock, Undo2,
 } from "lucide-react";
 import { money, money0, num } from "../lib/money.js";
+import { downloadCSV } from "../lib/csv.js";
+
+function ExportBtn({ rows, name }) {
+  if (!rows || !rows.length) return null;
+  return (
+    <button onClick={() => downloadCSV(name, rows)} className="btn-ghost !px-2 !py-1 text-xs text-sage-400 hover:text-brand-600" title="Export CSV">
+      <Download className="h-3.5 w-3.5" /> CSV
+    </button>
+  );
+}
 
 const iso = (d) => d.toISOString().slice(0, 10);
 const daysAgo = (n) => {
@@ -57,9 +68,9 @@ export default function Reports() {
     <div className="mx-auto max-w-6xl space-y-6">
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
-          <h1 className="font-display text-2xl font-semibold text-sage-900 dark:text-sage-50">Reports</h1>
+          <h1 className="font-display text-2xl font-semibold text-sage-900 dark:text-sage-50">Reports &amp; Analytics</h1>
           <p className="mt-1 text-sm text-sage-500 dark:text-sage-400">
-            Sales performance, margins and stock health.
+            Sales, margins, breakdowns and stock health — export any table to CSV.
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
@@ -96,19 +107,23 @@ export default function Reports() {
       ) : (
         <>
           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-            <Kpi icon={Wallet} tone="brand" label="Revenue" value={money(sales.summary.revenue)} sub={`${sales.summary.txns} sales`} />
+            <Kpi icon={Wallet} tone="brand" label="Net revenue" value={money(sales.summary.revenue)}
+                 sub={sales.summary.refunds > 0 ? `${money0(sales.summary.gross_revenue)} − ${money0(sales.summary.refunds)} refunds` : `${sales.summary.txns} sales`} />
             <Kpi icon={TrendingUp} tone="sky" label="Gross profit" value={money(sales.summary.gross_profit)}
-                 sub={`COGS ${money0(sales.summary.cogs)}`} />
-            <Kpi icon={Percent} tone="amber" label="Margin" value={`${sales.summary.margin_pct.toFixed(1)}%`}
-                 sub={`Discounts ${money0(sales.summary.discounts)}`} />
-            <Kpi icon={Receipt} tone="rose" label="Avg sale" value={money(sales.summary.avg_sale)}
+                 sub={`COGS ${money0(sales.summary.cogs)} · ${sales.summary.margin_pct.toFixed(1)}% margin`} />
+            <Kpi icon={Undo2} tone="rose" label="Refunds" value={money(sales.summary.refunds)}
+                 sub={`${sales.summary.refund_count} return${sales.summary.refund_count === 1 ? "" : "s"}`} />
+            <Kpi icon={Receipt} tone="amber" label="Avg sale" value={money(sales.summary.avg_sale)}
                  sub={`${sales.summary.txns} transactions`} />
           </div>
 
           <div className="grid gap-4 lg:grid-cols-3">
             {/* Trend */}
             <div className="card p-6 lg:col-span-2">
-              <h2 className="font-display text-lg font-semibold text-sage-900 dark:text-sage-50">Sales trend</h2>
+              <div className="flex items-center justify-between">
+                <h2 className="font-display text-lg font-semibold text-sage-900 dark:text-sage-50">Sales trend</h2>
+                <ExportBtn rows={sales.by_day} name={`daily-sales_${from}_${to}`} />
+              </div>
               {sales.by_day.length === 0 ? (
                 <Empty label="No sales in this period." />
               ) : (
@@ -164,9 +179,12 @@ export default function Reports() {
 
           {/* Top products */}
           <div className="card p-6">
-            <div className="mb-4 flex items-center gap-2">
-              <Trophy className="h-5 w-5 text-amber-500" />
-              <h2 className="font-display text-lg font-semibold text-sage-900 dark:text-sage-50">Top products</h2>
+            <div className="mb-4 flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Trophy className="h-5 w-5 text-amber-500" />
+                <h2 className="font-display text-lg font-semibold text-sage-900 dark:text-sage-50">Top products</h2>
+              </div>
+              <ExportBtn rows={sales.top_products} name={`top-products_${from}_${to}`} />
             </div>
             {sales.top_products.length === 0 ? (
               <Empty label="No sales in this period." />
@@ -184,6 +202,39 @@ export default function Reports() {
                 ))}
               </div>
             )}
+          </div>
+
+          {/* Category + staff breakdowns */}
+          <div className="grid gap-4 lg:grid-cols-2">
+            <BreakdownBars title="Sales by category" icon={Tag} rows={sales.by_category}
+              labelKey="category" exportName={`by-category_${from}_${to}`} />
+            <div className="card p-6">
+              <div className="mb-4 flex items-center justify-between">
+                <div className="flex items-center gap-2"><UserRound className="h-5 w-5 text-brand-600" />
+                  <h2 className="font-display text-lg font-semibold text-sage-900 dark:text-sage-50">Sales by staff</h2></div>
+                <ExportBtn rows={sales.by_staff} name={`by-staff_${from}_${to}`} />
+              </div>
+              {sales.by_staff.length === 0 ? <Empty label="No sales." /> : (
+                <table className="w-full text-sm">
+                  <tbody>
+                    {sales.by_staff.map((r, i) => (
+                      <tr key={i} className="border-b border-sage-100 last:border-0 dark:border-sage-800/60">
+                        <td className="py-2 font-medium text-sage-800 dark:text-sage-100">{r.staff}</td>
+                        <td className="py-2 text-right text-sage-400">{r.txns} sales</td>
+                        <td className="py-2 text-right font-semibold text-sage-900 dark:text-sage-50">{money0(r.revenue)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </div>
+          </div>
+
+          {/* Hour of day */}
+          <div className="card p-6">
+            <div className="mb-2 flex items-center gap-2"><Clock className="h-5 w-5 text-brand-600" />
+              <h2 className="font-display text-lg font-semibold text-sage-900 dark:text-sage-50">Busiest hours</h2></div>
+            <HourChart rows={sales.by_hour} />
           </div>
         </>
       )}
@@ -273,6 +324,59 @@ function ValRow({ label, value, accent }) {
     <div className="flex justify-between">
       <span className="text-sage-500 dark:text-sage-400">{label}</span>
       <span className={`font-semibold ${accent ? "text-brand-600 dark:text-brand-400" : "text-sage-900 dark:text-sage-50"}`}>{value}</span>
+    </div>
+  );
+}
+
+function BreakdownBars({ title, icon: Icon, rows, labelKey, exportName }) {
+  const max = Math.max(1, ...(rows || []).map((r) => r.revenue));
+  return (
+    <div className="card p-6">
+      <div className="mb-4 flex items-center justify-between">
+        <div className="flex items-center gap-2"><Icon className="h-5 w-5 text-brand-600" />
+          <h2 className="font-display text-lg font-semibold text-sage-900 dark:text-sage-50">{title}</h2></div>
+        <ExportBtn rows={rows} name={exportName} />
+      </div>
+      {!rows || rows.length === 0 ? <Empty label="No sales." /> : (
+        <div className="space-y-3">
+          {rows.slice(0, 8).map((r, i) => (
+            <div key={i}>
+              <div className="mb-1 flex items-center justify-between text-sm">
+                <span className="truncate font-medium text-sage-800 dark:text-sage-100">{r[labelKey]}</span>
+                <span className="shrink-0 pl-2 text-sage-500 dark:text-sage-400">{money0(r.revenue)} <span className="text-xs text-sage-400">· {r.qty}</span></span>
+              </div>
+              <div className="h-1.5 overflow-hidden rounded-full bg-sage-100 dark:bg-sage-800">
+                <div className="h-full rounded-full bg-brand-500" style={{ width: `${(r.revenue / max) * 100}%` }} />
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function HourChart({ rows }) {
+  const byHour = {};
+  (rows || []).forEach((r) => { byHour[r.hour] = r; });
+  const hours = Array.from({ length: 24 }, (_, h) => byHour[h] || { hour: h, revenue: 0, txns: 0 });
+  const max = Math.max(1, ...hours.map((h) => h.revenue));
+  const total = hours.reduce((s, h) => s + h.revenue, 0);
+  if (total === 0) return <Empty label="No sales in this period." />;
+  return (
+    <div className="mt-3 flex h-32 items-end gap-0.5">
+      {hours.map((h) => (
+        <div key={h.hour} className="group flex flex-1 flex-col items-center justify-end gap-1">
+          <div className="relative w-full">
+            <div className="w-full rounded-t bg-brand-500 transition-all group-hover:bg-brand-600"
+                 style={{ height: `${Math.max(2, (h.revenue / max) * 104)}px` }} />
+            <div className="pointer-events-none absolute bottom-full left-1/2 mb-1 hidden -translate-x-1/2 whitespace-nowrap rounded bg-sage-900 px-1.5 py-0.5 text-[10px] text-white group-hover:block dark:bg-sage-700">
+              {String(h.hour).padStart(2, "0")}:00 · {money0(h.revenue)}
+            </div>
+          </div>
+          {h.hour % 3 === 0 && <span className="text-[9px] text-sage-400">{h.hour}</span>}
+        </div>
+      ))}
     </div>
   );
 }
