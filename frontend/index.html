@@ -14,9 +14,9 @@
     />
     <script>
       // Apply dark mode + brand theme before paint to avoid flash.
+      // Dark mode is remembered explicitly (default light) — it never follows the OS.
       (function () {
-        var t = localStorage.getItem("remedy-theme");
-        if (t === "dark" || (!t && window.matchMedia("(prefers-color-scheme: dark)").matches)) {
+        if (localStorage.getItem("remedy-theme") === "dark") {
           document.documentElement.classList.add("dark");
         }
         var brand = localStorage.getItem("remedy-brand-css");
