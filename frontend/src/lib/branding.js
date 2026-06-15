@@ -105,6 +105,31 @@ export function legacyConfig(settings) {
   return { primary: color || DEFAULT_PRESET.primary };
 }
 
+// Resize a product photo to a small JPEG data URL (white-flattened for JPEG).
+export function fileToImage(file, maxEdge = 400, quality = 0.82) {
+  return new Promise((resolve, reject) => {
+    if (!file.type.startsWith("image/")) return reject(new Error("Please choose an image file"));
+    const reader = new FileReader();
+    reader.onerror = () => reject(new Error("Could not read the file"));
+    reader.onload = () => {
+      const img = new Image();
+      img.onerror = () => reject(new Error("That image could not be loaded"));
+      img.onload = () => {
+        const scale = Math.min(1, maxEdge / Math.max(img.width, img.height));
+        const w = Math.round(img.width * scale), h = Math.round(img.height * scale);
+        const canvas = document.createElement("canvas");
+        canvas.width = w; canvas.height = h;
+        const ctx = canvas.getContext("2d");
+        ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, w, h);
+        ctx.drawImage(img, 0, 0, w, h);
+        resolve(canvas.toDataURL("image/jpeg", quality));
+      };
+      img.src = reader.result;
+    };
+    reader.readAsDataURL(file);
+  });
+}
+
 // Read an image File, downscale, return a small PNG data URL.
 export function fileToLogo(file, maxEdge = 256) {
   return new Promise((resolve, reject) => {

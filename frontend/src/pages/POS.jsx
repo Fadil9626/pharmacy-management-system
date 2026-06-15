@@ -5,6 +5,7 @@ import { money } from "../lib/money.js";
 import ReceiptModal from "../components/Receipt.jsx";
 import { cacheCatalogue, loadCachedCatalogue, queueSale, queueCount } from "../lib/offlineDB.js";
 import { syncQueue } from "../lib/offlineSync.js";
+import ProductImage from "../components/ProductImage.jsx";
 import {
   Search, Plus, Minus, Trash2, ShoppingCart, Loader2, CheckCircle2, X,
   ShieldAlert, Banknote, CreditCard, Smartphone, ScanLine, HandCoins, Wallet, Lock,
@@ -392,6 +393,7 @@ export default function POS() {
                     {p.is_controlled && (
                       <ShieldAlert className="absolute right-2.5 top-2.5 h-4 w-4 text-rose-500" title="Controlled" />
                     )}
+                    <ProductImage product={p} className="mb-2 h-16 w-full" rounded="rounded-lg" />
                     <div className="line-clamp-2 pr-4 text-sm font-semibold text-sage-900 dark:text-sage-50">
                       {p.name}
                     </div>

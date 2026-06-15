@@ -7,9 +7,11 @@ import ConfirmModal from "../components/Confirm.jsx";
 import {
   Search, Plus, PackagePlus, X, Loader2, AlertTriangle, CalendarClock,
   Boxes, ShieldAlert, Pencil, Layers, Trash2, SlidersHorizontal, Upload, Download, CheckCircle2, FileSpreadsheet,
-  ClipboardCheck, Barcode, Printer, RefreshCw,
+  ClipboardCheck, Barcode, Printer, RefreshCw, ImagePlus,
 } from "lucide-react";
 import { barcodeSVG, printBarcodeLabels } from "../lib/barcode.js";
+import { fileToImage } from "../lib/branding.js";
+import ProductImage from "../components/ProductImage.jsx";
 
 const monthsUntil = (d) => {
   if (!d) return Infinity;
@@ -197,14 +199,19 @@ export default function Inventory() {
                     className="border-b border-sage-100 transition last:border-0 hover:bg-sage-50 dark:border-sage-800/60 dark:hover:bg-sage-800/40"
                   >
                     <td className="px-5 py-3.5">
-                      <div className="flex items-center gap-2 font-medium text-sage-900 dark:text-sage-50">
-                        {p.name}
-                        {p.is_controlled && (
-                          <ShieldAlert className="h-3.5 w-3.5 text-rose-500" title="Controlled drug" />
-                        )}
-                      </div>
-                      <div className="text-xs text-sage-400">
-                        {[p.generic_name, p.strength, p.dosage_form].filter(Boolean).join(" · ")}
+                      <div className="flex items-center gap-3">
+                        <ProductImage product={p} className="h-10 w-10" />
+                        <div className="min-w-0">
+                          <div className="flex items-center gap-2 font-medium text-sage-900 dark:text-sage-50">
+                            {p.name}
+                            {p.is_controlled && (
+                              <ShieldAlert className="h-3.5 w-3.5 shrink-0 text-rose-500" title="Controlled drug" />
+                            )}
+                          </div>
+                          <div className="text-xs text-sage-400">
+                            {[p.generic_name, p.strength, p.dosage_form].filter(Boolean).join(" · ")}
+                          </div>
+                        </div>
                       </div>
                     </td>
                     <td className="px-5 py-3.5 text-sage-500 dark:text-sage-400">
@@ -344,6 +351,7 @@ function ProductModal({ product, categories = [], onClose, onSaved }) {
     base_price: product?.base_price ?? "",
     pack_size: product?.pack_size ?? 1, pack_label: product?.pack_label || "",
     surveillance_tag: product?.surveillance_tag || "",
+    image: undefined, // undefined = keep existing, "" = remove, dataURL = set
   });
   const [shTags, setShTags] = useState([]);
   useEffect(() => { api("/api/public-health/tags").then(setShTags).catch(() => {}); }, []);
@@ -371,6 +379,26 @@ function ProductModal({ product, categories = [], onClose, onSaved }) {
   return (
     <Modal title={editing ? "Edit product" : "New product"} onClose={onClose}>
       <form onSubmit={save} className="space-y-4">
+        <div className="flex items-center gap-4">
+          {f.image
+            ? <img src={f.image} alt="" className="h-16 w-16 rounded-xl bg-sage-100 object-cover dark:bg-sage-800" />
+            : (editing && product.has_image && f.image !== "")
+              ? <img src={`/api/products/${product.id}/image`} alt="" className="h-16 w-16 rounded-xl bg-sage-100 object-cover dark:bg-sage-800" />
+              : <ProductImage product={{ name: f.name }} className="h-16 w-16" rounded="rounded-xl" />}
+          <div className="flex flex-col items-start gap-1.5">
+            <label className="btn-outline !py-1.5 cursor-pointer text-sm">
+              <ImagePlus className="h-4 w-4" /> {(f.image || (editing && product.has_image && f.image !== "")) ? "Change photo" : "Add photo"}
+              <input type="file" accept="image/*" className="hidden" onChange={async (e) => {
+                const file = e.target.files?.[0]; if (!file) return;
+                try { const dataUrl = await fileToImage(file); setF((p) => ({ ...p, image: dataUrl })); } catch (er) { setErr(er.message); }
+                e.target.value = "";
+              }} />
+            </label>
+            {(f.image || (editing && product.has_image && f.image !== "")) && (
+              <button type="button" className="btn-ghost !py-1 text-xs text-rose-500" onClick={() => setF((p) => ({ ...p, image: "" }))}>Remove photo</button>
+            )}
+          </div>
+        </div>
         <Field label="Name *">
           <input className="input" value={f.name} onChange={set("name")} required autoFocus />
         </Field>

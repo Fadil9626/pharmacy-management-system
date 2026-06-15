@@ -6,6 +6,22 @@ const { mint } = require("../lib/barcode");
 
 const branchOf = effectiveBranch;
 
+// Serve a product image as raw bytes (public — product photos aren't sensitive,
+// and <img> tags can't send an auth header). 404 when none is set.
+exports.serveImage = async (req, res) => {
+  try {
+    const { rows } = await pool.query("SELECT image FROM products WHERE id = $1", [req.params.id]);
+    const dataUrl = rows[0]?.image;
+    const m = dataUrl && /^data:(.+?);base64,(.*)$/s.exec(dataUrl);
+    if (!m) return res.status(404).end();
+    res.set("Content-Type", m[1]);
+    res.set("Cache-Control", "public, max-age=300");
+    res.send(Buffer.from(m[2], "base64"));
+  } catch (e) {
+    res.status(500).end();
+  }
+};
+
 // Mint a unique barcode. Scheme follows settings.barcode_prefix (overridable per
 // request): blank -> numeric EAN-13; a prefix -> alphanumeric CODE128 SKU; the
 // token {name} derives the prefix from the product name. If product_id is given,
@@ -53,8 +69,11 @@ exports.listProducts = async (req, res) => {
        ORDER BY p.name`,
       [branchId]
     );
-    res.json(rows.map((p) => ({
+    // Strip the (potentially large) image blob from the list; expose a flag and
+    // serve the actual bytes via /api/products/:id/image instead.
+    res.json(rows.map(({ image, ...p }) => ({
       ...p,
+      has_image: !!image,
       effective_price: effectivePrice(ctx, p.base_price, p.price),
     })));
   } catch (e) {
@@ -69,7 +88,7 @@ exports.listLite = async (req, res) => {
     const { rows } = await pool.query(
       `SELECT p.id, p.name, p.generic_name, p.category, p.category_id, p.dosage_form,
               p.strength, p.unit, p.barcode, p.is_controlled, p.reorder_level, p.base_price,
-              p.pack_size, p.pack_label, p.surveillance_tag,
+              p.pack_size, p.pack_label, p.surveillance_tag, (p.image IS NOT NULL) AS has_image,
               COALESCE(s.qty, 0)::int   AS stock,
               COALESCE(s.cost, 0)::float  AS last_cost,
               COALESCE(s.price, 0)::float AS last_price
@@ -155,7 +174,7 @@ async function resolveCategory(category_id, categoryText) {
 }
 
 exports.createProduct = async (req, res) => {
-  const { name, generic_name, category, category_id, dosage_form, strength, unit, barcode, is_controlled, reorder_level, base_price, pack_size, pack_label, surveillance_tag } = req.body || {};
+  const { name, generic_name, category, category_id, dosage_form, strength, unit, barcode, is_controlled, reorder_level, base_price, pack_size, pack_label, surveillance_tag, image } = req.body || {};
   if (!name) return res.status(400).json({ message: "Product name is required" });
   try {
     const cat = await resolveCategory(category_id, category);
@@ -168,14 +187,14 @@ exports.createProduct = async (req, res) => {
     let bc = barcode || null;
     if (!bc && def.barcode_auto) bc = await mint(def.barcode_prefix, name);
     const { rows } = await pool.query(
-      `INSERT INTO products (name, generic_name, category, category_id, dosage_form, strength, unit, barcode, is_controlled, reorder_level, base_price, pack_size, pack_label, surveillance_tag)
-       VALUES ($1,$2,$3,$4,$5,$6,COALESCE($7,'unit'),$8,COALESCE($9,false),$10,$11,$12,$13,$14) RETURNING *`,
+      `INSERT INTO products (name, generic_name, category, category_id, dosage_form, strength, unit, barcode, is_controlled, reorder_level, base_price, pack_size, pack_label, surveillance_tag, image)
+       VALUES ($1,$2,$3,$4,$5,$6,COALESCE($7,'unit'),$8,COALESCE($9,false),$10,$11,$12,$13,$14,$15) RETURNING id`,
       [name, generic_name || null, cat.name, cat.id, dosage_form || null, strength || null,
        unit || null, bc, is_controlled || false, reorder,
        base_price !== "" && base_price != null ? Number(base_price) : null,
-       pack, pack_label || null, surveillance_tag || null]
+       pack, pack_label || null, surveillance_tag || null, image || null]
     );
-    res.status(201).json(rows[0]);
+    res.status(201).json({ id: rows[0].id });
   } catch (e) {
     res.status(500).json({ message: e.message });
   }
@@ -183,7 +202,7 @@ exports.createProduct = async (req, res) => {
 
 exports.updateProduct = async (req, res) => {
   const id = Number(req.params.id);
-  const { name, generic_name, category, category_id, dosage_form, strength, unit, barcode, is_controlled, reorder_level, base_price, pack_size, pack_label, surveillance_tag } = req.body || {};
+  const { name, generic_name, category, category_id, dosage_form, strength, unit, barcode, is_controlled, reorder_level, base_price, pack_size, pack_label, surveillance_tag, image } = req.body || {};
   if (!name) return res.status(400).json({ message: "Product name is required" });
   try {
     const cat = await resolveCategory(category_id, category);
@@ -193,12 +212,14 @@ exports.updateProduct = async (req, res) => {
          name=$1, generic_name=$2, category=$3, category_id=$4, dosage_form=$5, strength=$6,
          unit=COALESCE($7,'unit'), barcode=$8, is_controlled=COALESCE($9,false),
          reorder_level=COALESCE($10,10), base_price=COALESCE($12, base_price),
-         pack_size=$13, pack_label=$14, surveillance_tag=$15
-       WHERE id=$11 RETURNING *`,
+         pack_size=$13, pack_label=$14, surveillance_tag=$15,
+         image = CASE WHEN $16::text = '' THEN NULL WHEN $16::text IS NULL THEN image ELSE $16::text END
+       WHERE id=$11 RETURNING id, name, base_price, reorder_level`,
       [name, generic_name || null, cat.name, cat.id, dosage_form || null, strength || null,
        unit || null, barcode || null, is_controlled || false, reorder_level || 10, id,
        base_price !== "" && base_price != null ? Number(base_price) : null,
-       pack, pack_label || null, surveillance_tag || null]
+       pack, pack_label || null, surveillance_tag || null,
+       image === undefined ? null : image]
     );
     if (!rows.length) return res.status(404).json({ message: "Product not found" });
     logAudit(req, "product_update", "product", id, { name: rows[0].name, base_price: rows[0].base_price, reorder_level: rows[0].reorder_level });

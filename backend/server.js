@@ -93,6 +93,7 @@ app.get("/api/me", protect, auth.me);
 app.get("/api/modules", protect, modules.list);
 app.get("/api/dashboard", protect, dashboard.summary);
 
+app.get("/api/products/:id/image", catalog.serveImage); // public: <img> can't auth
 app.get("/api/products", protect, requireModule("inventory"), authorize("owner", "manager", "pharmacist"), catalog.listProducts);
 app.post("/api/products", protect, requireModule("inventory"), requirePermission("inventory.manage"), catalog.createProduct);
 app.post("/api/products/import", protect, requireModule("inventory"), requirePermission("inventory.manage"), catalog.importProducts);

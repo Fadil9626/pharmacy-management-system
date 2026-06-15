@@ -17,6 +17,7 @@ exports.sellableProducts = async (req, res) => {
     const { rows } = await pool.query(
       `SELECT p.id, p.name, p.generic_name, p.category, p.strength,
               p.dosage_form, p.unit, p.barcode, p.is_controlled, p.base_price,
+              (p.image IS NOT NULL) AS has_image,
               COALESCE(s.qty, 0)::int   AS stock,
               COALESCE(s.price, 0)::float AS price,
               s.nearest_expiry
