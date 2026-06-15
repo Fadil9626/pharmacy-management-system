@@ -164,9 +164,15 @@ export default function Settings() {
               <Field label="Default reorder level">
                 <input type="number" min="0" className="input" value={f.low_stock_default ?? 10} onChange={set("low_stock_default")} disabled={!canEdit} />
               </Field>
+              <Field label="Barcode prefix">
+                <input className="input" value={f.barcode_prefix ?? ""} onChange={set("barcode_prefix")} disabled={!canEdit} placeholder="blank = EAN-13" />
+              </Field>
             </div>
             <p className="text-xs text-sage-400">
               Batches expiring within the window are flagged on the dashboard, inventory and reports. New products start at the default reorder level.
+            </p>
+            <p className="text-xs text-sage-400">
+              <b>Barcode prefix:</b> leave blank for numeric EAN-13. Enter letters (e.g. <code>RMD</code>) for lettered CODE128 SKUs like <code>RMD00482</code>, or use <code>{"{name}"}</code> to start from the product name (Paracetamol → <code>PAR00482</code>).
             </p>
           </Section>
         )}

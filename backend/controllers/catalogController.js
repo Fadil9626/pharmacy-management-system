@@ -2,15 +2,28 @@ const pool = require("../config/db");
 const { pricingContext, effectivePrice } = require("../lib/pricing");
 const { effectiveBranch } = require("../lib/context");
 const { logAudit } = require("../lib/audit");
-const { uniqueEAN13 } = require("../lib/barcode");
+const { uniqueEAN13, uniquePrefixed, cleanPrefix, deriveFromName } = require("../lib/barcode");
 
 const branchOf = effectiveBranch;
 
-// Mint a unique in-store EAN-13. If product_id is given, assign + save it.
+// Mint a unique barcode. Scheme follows settings.barcode_prefix (overridable per
+// request): blank -> numeric EAN-13; a prefix -> alphanumeric CODE128 SKU; the
+// token {name} derives the prefix from the product name. If product_id is given,
+// the code is assigned + saved.
 exports.generateBarcode = async (req, res) => {
   try {
-    const code = await uniqueEAN13();
     const pid = Number(req.body?.product_id);
+    const settings = (await pool.query("SELECT barcode_prefix FROM settings WHERE id = 1")).rows[0] || {};
+    let raw = req.body?.prefix != null ? String(req.body.prefix) : (settings.barcode_prefix || "");
+
+    if (/\{name\}/i.test(raw)) {
+      let name = req.body?.name;
+      if (!name && pid) name = (await pool.query("SELECT name FROM products WHERE id = $1", [pid])).rows[0]?.name;
+      raw = raw.replace(/\{name\}/gi, deriveFromName(name));
+    }
+    const prefix = cleanPrefix(raw);
+    const code = prefix ? await uniquePrefixed(prefix) : await uniqueEAN13();
+
     if (pid) {
       const { rowCount } = await pool.query("UPDATE products SET barcode = $1 WHERE id = $2", [code, pid]);
       if (!rowCount) return res.status(404).json({ message: "Product not found" });

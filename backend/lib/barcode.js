@@ -15,14 +15,26 @@ function buildEAN13() {
   return body + checkDigit(body);
 }
 
-// A fresh EAN-13 not already used by another product.
-async function uniqueEAN13() {
-  for (let attempt = 0; attempt < 10; attempt++) {
-    const code = buildEAN13();
+// Generic uniqueness retry wrapper around a code factory.
+async function allocate(make) {
+  for (let attempt = 0; attempt < 12; attempt++) {
+    const code = make();
     const { rows } = await pool.query("SELECT 1 FROM products WHERE barcode = $1 LIMIT 1", [code]);
     if (!rows.length) return code;
   }
   throw new Error("Could not allocate a unique barcode — try again");
 }
 
-module.exports = { checkDigit, uniqueEAN13 };
+const uniqueEAN13 = () => allocate(buildEAN13);
+
+// Letters/digits only, uppercased, capped — safe for a CODE128 prefix.
+const cleanPrefix = (s) => String(s || "").toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 6);
+
+// First 3 alpha characters of a product name, e.g. "Paracetamol 500mg" -> "PAR".
+const deriveFromName = (name) => String(name || "").toUpperCase().replace(/[^A-Z]/g, "").slice(0, 3);
+
+// Alphanumeric CODE128 SKU: PREFIX + 5 random digits, e.g. "RMD48201".
+const uniquePrefixed = (prefix) =>
+  allocate(() => prefix + String(Math.floor(Math.random() * 1e5)).padStart(5, "0"));
+
+module.exports = { checkDigit, uniqueEAN13, uniquePrefixed, cleanPrefix, deriveFromName };

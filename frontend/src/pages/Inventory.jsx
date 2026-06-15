@@ -407,7 +407,7 @@ function ProductModal({ product, categories = [], onClose, onSaved }) {
           <div className="flex gap-2">
             <input className="input" value={f.barcode} onChange={set("barcode")} placeholder="Scan or generate" />
             <button type="button" className="btn-outline shrink-0" title="Generate an in-store barcode"
-              onClick={async () => { try { const { barcode } = await api("/api/barcode/generate", { method: "POST", body: {} }); setF((p) => ({ ...p, barcode })); } catch (e) { setErr(e.message); } }}>
+              onClick={async () => { try { const { barcode } = await api("/api/barcode/generate", { method: "POST", body: { name: f.name } }); setF((p) => ({ ...p, barcode })); } catch (e) { setErr(e.message); } }}>
               <Barcode className="h-4 w-4" /> Generate
             </button>
           </div>
@@ -1047,7 +1047,7 @@ function BarcodeModal({ product, settings, onClose, onChanged }) {
   const generate = async () => {
     setBusy(true); setErr("");
     try {
-      const { barcode } = await api("/api/barcode/generate", { method: "POST", body: { product_id: product.id } });
+      const { barcode } = await api("/api/barcode/generate", { method: "POST", body: { product_id: product.id, name: product.name } });
       setCode(barcode);
       onChanged && onChanged();
     } catch (e) { setErr(e.message); } finally { setBusy(false); }
