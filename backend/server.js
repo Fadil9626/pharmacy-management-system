@@ -92,7 +92,7 @@ app.get("/api/me", protect, auth.me);
 app.get("/api/modules", protect, modules.list);
 app.get("/api/dashboard", protect, dashboard.summary);
 
-app.get("/api/products", protect, requireModule("inventory"), catalog.listProducts);
+app.get("/api/products", protect, requireModule("inventory"), authorize("owner", "manager", "pharmacist"), catalog.listProducts);
 app.post("/api/products", protect, requireModule("inventory"), requirePermission("inventory.manage"), catalog.createProduct);
 app.post("/api/products/import", protect, requireModule("inventory"), requirePermission("inventory.manage"), catalog.importProducts);
 app.put("/api/products/:id", protect, requireModule("inventory"), requirePermission("inventory.manage"), catalog.updateProduct);

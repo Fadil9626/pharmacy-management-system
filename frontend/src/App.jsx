@@ -1,37 +1,43 @@
-import { lazy, Suspense } from "react";
+import { Suspense } from "react";
 import { Routes, Route, Navigate } from "react-router-dom";
 import { useAuth } from "./context/AuthContext.jsx";
 import Layout from "./components/Layout.jsx";
+import ErrorBoundary from "./components/ErrorBoundary.jsx";
+import AccessDenied from "./components/AccessDenied.jsx";
+import NotFound from "./components/NotFound.jsx";
+import lazyWithRetry from "./lib/lazyWithRetry.js";
 import { Pill } from "lucide-react";
 
 // Code-split every page so the login screen only ships its own small chunk —
-// a cashier never downloads the finance/admin bundles.
-const Login = lazy(() => import("./pages/Login.jsx"));
-const Dashboard = lazy(() => import("./pages/Dashboard.jsx"));
-const Inventory = lazy(() => import("./pages/Inventory.jsx"));
-const POS = lazy(() => import("./pages/POS.jsx"));
-const Sales = lazy(() => import("./pages/Sales.jsx"));
-const Customers = lazy(() => import("./pages/Customers.jsx"));
-const Prescriptions = lazy(() => import("./pages/Prescriptions.jsx"));
-const Controlled = lazy(() => import("./pages/Controlled.jsx"));
-const Purchasing = lazy(() => import("./pages/Purchasing.jsx"));
-const Pricing = lazy(() => import("./pages/Pricing.jsx"));
-const Reports = lazy(() => import("./pages/Reports.jsx"));
-const Finance = lazy(() => import("./pages/Finance.jsx"));
-const Branches = lazy(() => import("./pages/Branches.jsx"));
-const Staff = lazy(() => import("./pages/Staff.jsx"));
-const Settings = lazy(() => import("./pages/Settings.jsx"));
+// a cashier never downloads the finance/admin bundles. lazyWithRetry survives a
+// transient blip / freshly-deployed chunk before falling back to ErrorBoundary.
+const Login = lazyWithRetry(() => import("./pages/Login.jsx"));
+const Dashboard = lazyWithRetry(() => import("./pages/Dashboard.jsx"));
+const Inventory = lazyWithRetry(() => import("./pages/Inventory.jsx"));
+const POS = lazyWithRetry(() => import("./pages/POS.jsx"));
+const Sales = lazyWithRetry(() => import("./pages/Sales.jsx"));
+const Customers = lazyWithRetry(() => import("./pages/Customers.jsx"));
+const Prescriptions = lazyWithRetry(() => import("./pages/Prescriptions.jsx"));
+const Controlled = lazyWithRetry(() => import("./pages/Controlled.jsx"));
+const Purchasing = lazyWithRetry(() => import("./pages/Purchasing.jsx"));
+const Pricing = lazyWithRetry(() => import("./pages/Pricing.jsx"));
+const Reports = lazyWithRetry(() => import("./pages/Reports.jsx"));
+const Finance = lazyWithRetry(() => import("./pages/Finance.jsx"));
+const Branches = lazyWithRetry(() => import("./pages/Branches.jsx"));
+const Staff = lazyWithRetry(() => import("./pages/Staff.jsx"));
+const Settings = lazyWithRetry(() => import("./pages/Settings.jsx"));
 
 // Route table: each page declares the module it needs and the roles allowed.
 // The single source of truth the sidebar nav mirrors.
+const STAFF = ["owner", "manager", "pharmacist"]; // everyone except cashier
 const ROUTES = [
   { index: true, el: <Dashboard /> },
-  { path: "inventory", el: <Inventory />, module: "inventory" },
-  { path: "pos", el: <POS />, module: "pos" },
-  { path: "sales", el: <Sales />, module: "pos" },
-  { path: "customers", el: <Customers />, module: "customers" },
-  { path: "prescriptions", el: <Prescriptions />, module: "prescriptions" },
-  { path: "controlled", el: <Controlled />, module: "controlled_drugs" },
+  { path: "inventory", el: <Inventory />, module: "inventory", roles: STAFF },
+  { path: "pos", el: <POS />, module: "pos" },              // cashiers' core screen — open to all roles
+  { path: "sales", el: <Sales />, module: "pos" },          // reprint receipts — open to all roles
+  { path: "customers", el: <Customers />, module: "customers", roles: STAFF },
+  { path: "prescriptions", el: <Prescriptions />, module: "prescriptions", roles: STAFF },
+  { path: "controlled", el: <Controlled />, module: "controlled_drugs", roles: STAFF },
   { path: "purchasing", el: <Purchasing />, module: "purchasing", roles: ["owner", "manager", "pharmacist"] },
   { path: "pricing", el: <Pricing />, module: "market_pricing", roles: ["owner", "manager"] },
   { path: "reports", el: <Reports />, module: "reports", roles: ["owner", "manager"] },
@@ -59,13 +65,13 @@ function Protected({ children }) {
   return children;
 }
 
-// Route-level RBAC + licensing. Disallowed role or an off module → bounce to the
-// dashboard, so typing /finance or /settings in the address bar gets you nowhere.
-// (The backend independently authorizes every request — this is the UI layer.)
+// Route-level RBAC + licensing. Rather than silently bouncing to the dashboard
+// (which makes a user think their click was ignored), render an explicit reason.
+// The backend independently authorizes every request — this is the UI layer.
 function Guarded({ roles, module, children }) {
   const { user, moduleEnabled } = useAuth();
-  if (module && !moduleEnabled(module)) return <Navigate to="/" replace />;
-  if (roles && !roles.includes(user?.role)) return <Navigate to="/" replace />;
+  if (module && !moduleEnabled(module)) return <AccessDenied variant="module" />;
+  if (roles && !roles.includes(user?.role)) return <AccessDenied variant="role" role={user?.role} />;
   return children;
 }
 
@@ -73,31 +79,34 @@ export default function App() {
   const { user, loading } = useAuth();
 
   return (
-    <Suspense fallback={<Splash />}>
-      <Routes>
-        <Route
-          path="/login"
-          element={loading ? <Splash /> : user ? <Navigate to="/" replace /> : <Login />}
-        />
-        <Route
-          path="/"
-          element={
-            <Protected>
-              <Layout />
-            </Protected>
-          }
-        >
-          {ROUTES.map((r, i) => (
-            <Route
-              key={i}
-              index={r.index}
-              path={r.path}
-              element={<Guarded roles={r.roles} module={r.module}>{r.el}</Guarded>}
-            />
-          ))}
-        </Route>
-        <Route path="*" element={<Navigate to="/" replace />} />
-      </Routes>
-    </Suspense>
+    <ErrorBoundary fullScreen>
+      <Suspense fallback={<Splash />}>
+        <Routes>
+          <Route
+            path="/login"
+            element={loading ? <Splash /> : user ? <Navigate to="/" replace /> : <Login />}
+          />
+          <Route
+            path="/"
+            element={
+              <Protected>
+                <Layout />
+              </Protected>
+            }
+          >
+            {ROUTES.map((r, i) => (
+              <Route
+                key={i}
+                index={r.index}
+                path={r.path}
+                element={<Guarded roles={r.roles} module={r.module}>{r.el}</Guarded>}
+              />
+            ))}
+            {/* Unknown URL under the app shell → honest 404 (keeps the menu). */}
+            <Route path="*" element={<NotFound />} />
+          </Route>
+        </Routes>
+      </Suspense>
+    </ErrorBoundary>
   );
 }

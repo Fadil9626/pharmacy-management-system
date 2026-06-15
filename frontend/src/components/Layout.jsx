@@ -1,7 +1,8 @@
 import { Fragment, Suspense, useEffect, useState } from "react";
-import { NavLink, Outlet, useNavigate } from "react-router-dom";
+import { NavLink, Outlet, useNavigate, useLocation } from "react-router-dom";
 import { useAuth } from "../context/AuthContext.jsx";
 import { useTheme } from "../lib/theme.js";
+import ErrorBoundary from "./ErrorBoundary.jsx";
 import { Loader2 } from "lucide-react";
 import { api, getActiveBranch, setActiveBranch } from "../lib/api.js";
 import {
@@ -14,14 +15,14 @@ import {
 // `roles` limits visibility to certain roles (admin sections).
 const NAV = [
   { to: "/", label: "Dashboard", icon: LayoutDashboard, module: null, end: true },
-  { to: "/inventory", label: "Inventory", icon: Boxes, module: "inventory" },
+  { to: "/inventory", label: "Inventory", icon: Boxes, module: "inventory", roles: ["owner", "manager", "pharmacist"] },
   { to: "/pos", label: "Point of Sale", icon: ShoppingCart, module: "pos" },
   { to: "/sales", label: "Sales", icon: Receipt, module: "pos" },
   { to: "/purchasing", label: "Purchasing", icon: Truck, module: "purchasing", roles: ["owner", "manager", "pharmacist"] },
   { to: "/pricing", label: "Market Pricing", icon: TrendingUp, module: "market_pricing", roles: ["owner", "manager"] },
-  { to: "/prescriptions", label: "Prescriptions", icon: ClipboardList, module: "prescriptions" },
-  { to: "/customers", label: "Customers", icon: Users, module: "customers" },
-  { to: "/controlled", label: "Controlled Drugs", icon: ShieldAlert, module: "controlled_drugs" },
+  { to: "/prescriptions", label: "Prescriptions", icon: ClipboardList, module: "prescriptions", roles: ["owner", "manager", "pharmacist"] },
+  { to: "/customers", label: "Customers", icon: Users, module: "customers", roles: ["owner", "manager", "pharmacist"] },
+  { to: "/controlled", label: "Controlled Drugs", icon: ShieldAlert, module: "controlled_drugs", roles: ["owner", "manager", "pharmacist"] },
   { to: "/finance", label: "Finance", icon: Wallet, module: "finance", roles: ["owner", "manager"] },
   { to: "/reports", label: "Reports", icon: FileText, module: "reports", roles: ["owner", "manager"] },
   { to: "/branches", label: "Branches", icon: GitBranch, module: "branches", roles: ["owner", "manager"] },
@@ -79,6 +80,7 @@ export default function Layout() {
   const { user, logout, moduleEnabled, settings } = useAuth();
   const { theme, toggle } = useTheme();
   const navigate = useNavigate();
+  const location = useLocation();
   const [open, setOpen] = useState(false);
 
   const items = NAV.filter(
@@ -176,13 +178,17 @@ export default function Layout() {
         </header>
 
         <main className="flex-1 px-4 py-6 lg:px-8 lg:py-8">
-          <Suspense fallback={
-            <div className="flex h-64 items-center justify-center text-sage-400">
-              <Loader2 className="h-6 w-6 animate-spin" />
-            </div>
-          }>
-            <Outlet />
-          </Suspense>
+          {/* Keyed by route so navigating elsewhere clears a page-level error
+              without a reload — the sidebar/topbar stay alive throughout. */}
+          <ErrorBoundary key={location.pathname}>
+            <Suspense fallback={
+              <div className="flex h-64 items-center justify-center text-sage-400">
+                <Loader2 className="h-6 w-6 animate-spin" />
+              </div>
+            }>
+              <Outlet />
+            </Suspense>
+          </ErrorBoundary>
         </main>
       </div>
     </div>
