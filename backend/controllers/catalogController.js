@@ -62,6 +62,56 @@ exports.listLite = async (req, res) => {
   }
 };
 
+// Find a category by name, creating it if needed (used by CSV import).
+async function resolveCategoryByName(name) {
+  if (!name || !name.trim()) return null;
+  const n = name.trim();
+  const f = await pool.query("SELECT id FROM categories WHERE lower(name) = lower($1) LIMIT 1", [n]);
+  if (f.rows.length) return f.rows[0].id;
+  const ins = await pool.query("INSERT INTO categories (name) VALUES ($1) ON CONFLICT (name) DO NOTHING RETURNING id", [n]);
+  if (ins.rows.length) return ins.rows[0].id;
+  const f2 = await pool.query("SELECT id FROM categories WHERE lower(name) = lower($1) LIMIT 1", [n]);
+  return f2.rows[0]?.id || null;
+}
+
+// Bulk import products from parsed CSV rows.
+exports.importProducts = async (req, res) => {
+  const rows = Array.isArray(req.body.products) ? req.body.products : null;
+  if (!rows || !rows.length) return res.status(400).json({ message: "No rows to import" });
+  if (rows.length > 5000) return res.status(400).json({ message: "Too many rows (max 5000 per import)" });
+  try {
+    const def = await pool.query("SELECT low_stock_default FROM settings WHERE id = 1");
+    const reorderDefault = Number(def.rows[0]?.low_stock_default || 10);
+    let created = 0, skipped = 0;
+    const errors = [];
+    for (let i = 0; i < rows.length; i++) {
+      const r = rows[i] || {};
+      try {
+        const name = String(r.name || "").trim();
+        if (!name) { errors.push({ row: i + 1, error: "Missing name" }); continue; }
+        const dup = await pool.query("SELECT 1 FROM products WHERE lower(name) = lower($1) AND is_active = true LIMIT 1", [name]);
+        if (dup.rows.length) { skipped++; continue; }
+        const catId = await resolveCategoryByName(r.category);
+        const reorder = r.reorder_level != null && r.reorder_level !== "" ? Number(r.reorder_level) || reorderDefault : reorderDefault;
+        const controlled = /^(1|true|yes|y)$/i.test(String(r.is_controlled || ""));
+        await pool.query(
+          `INSERT INTO products (name, generic_name, category, category_id, dosage_form, strength, unit, barcode, is_controlled, reorder_level, base_price)
+           VALUES ($1,$2,$3,$4,$5,$6,COALESCE(NULLIF($7,''),'unit'),$8,$9,$10,$11)`,
+          [name, r.generic_name || null, r.category || null, catId, r.dosage_form || null, r.strength || null,
+           r.unit || null, r.barcode || null, controlled, reorder,
+           r.base_price != null && r.base_price !== "" ? Number(r.base_price) : null]
+        );
+        created++;
+      } catch (e) {
+        errors.push({ row: i + 1, error: e.message });
+      }
+    }
+    res.json({ created, skipped, errors });
+  } catch (e) {
+    res.status(500).json({ message: e.message });
+  }
+};
+
 // Resolve a category_id to its name, or fall back to free text (legacy).
 async function resolveCategory(category_id, categoryText) {
   if (category_id) {

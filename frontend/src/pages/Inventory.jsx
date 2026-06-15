@@ -2,9 +2,10 @@ import { Fragment, useEffect, useMemo, useState } from "react";
 import { api } from "../lib/api.js";
 import { useAuth } from "../context/AuthContext.jsx";
 import { money } from "../lib/money.js";
+import { parseCSV, downloadCSV } from "../lib/csv.js";
 import {
   Search, Plus, PackagePlus, X, Loader2, AlertTriangle, CalendarClock,
-  Boxes, ShieldAlert, Pencil, Layers, Trash2, SlidersHorizontal,
+  Boxes, ShieldAlert, Pencil, Layers, Trash2, SlidersHorizontal, Upload, Download, CheckCircle2, FileSpreadsheet,
 } from "lucide-react";
 
 const monthsUntil = (d) => {
@@ -60,6 +61,7 @@ export default function Inventory() {
   const [categories, setCategories] = useState([]);
   const [catFilter, setCatFilter] = useState("");
   const [showCategories, setShowCategories] = useState(false);
+  const [showImport, setShowImport] = useState(false);
   const [showProduct, setShowProduct] = useState(false);
   const [editFor, setEditFor] = useState(null);
   const [receiveFor, setReceiveFor] = useState(null);
@@ -110,6 +112,11 @@ export default function Inventory() {
           {can("inventory.categories") && (
             <button className="btn-outline" onClick={() => setShowCategories(true)}>
               <Layers className="h-4 w-4" /> Categories
+            </button>
+          )}
+          {can("inventory.manage") && (
+            <button className="btn-outline" onClick={() => setShowImport(true)}>
+              <Upload className="h-4 w-4" /> Import
             </button>
           )}
           {can("inventory.manage") && (
@@ -266,6 +273,9 @@ export default function Inventory() {
           onClose={() => setShowCategories(false)}
           onChanged={() => { loadCats(); load(); }}
         />
+      )}
+      {showImport && (
+        <ImportModal onClose={() => setShowImport(false)} onDone={() => { load(); loadCats(); }} />
       )}
       {receiveFor && (
         <ReceiveModal
@@ -519,6 +529,104 @@ function BatchDrawer({ product, onChanged }) {
         <AdjustModal batch={adjust} onClose={() => setAdjust(null)} onSaved={() => { setAdjust(null); load(); onChanged && onChanged(); }} />
       )}
     </div>
+  );
+}
+
+const IMPORT_COLUMNS = ["name", "generic_name", "category", "dosage_form", "strength", "unit", "barcode", "reorder_level", "is_controlled", "base_price"];
+
+function ImportModal({ onClose, onDone }) {
+  const fileRef = useRef(null);
+  const [rows, setRows] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [result, setResult] = useState(null);
+  const [err, setErr] = useState("");
+
+  const onFile = async (e) => {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file) return;
+    try {
+      const text = await file.text();
+      const parsed = parseCSV(text);
+      if (!parsed.length) return setErr("No rows found in that file.");
+      if (!("name" in parsed[0])) return setErr("CSV must have a 'name' column.");
+      setRows(parsed); setErr("");
+    } catch { setErr("Could not read that file."); }
+  };
+
+  const template = () => downloadCSV("remedy-products-template", [
+    { name: "Amoxicillin 500mg", generic_name: "Amoxicillin", category: "Antibiotics", dosage_form: "Capsule", strength: "500mg", unit: "capsule", barcode: "", reorder_level: 50, is_controlled: "no", base_price: "" },
+  ], IMPORT_COLUMNS);
+
+  const doImport = async () => {
+    setBusy(true); setErr("");
+    try {
+      const res = await api("/api/products/import", { method: "POST", body: { products: rows } });
+      setResult(res);
+      onDone && onDone();
+    } catch (e) { setErr(e.message); } finally { setBusy(false); }
+  };
+
+  return (
+    <Modal title="Import products" onClose={onClose}>
+      {result ? (
+        <div className="space-y-4">
+          <div className="flex items-center gap-2 text-brand-600"><CheckCircle2 className="h-5 w-5" /> <span className="font-medium">Import complete</span></div>
+          <div className="grid grid-cols-3 gap-3 text-center">
+            <div className="rounded-xl border border-sage-200 p-3 dark:border-sage-800"><div className="text-2xl font-semibold text-brand-600">{result.created}</div><div className="text-xs text-sage-400">created</div></div>
+            <div className="rounded-xl border border-sage-200 p-3 dark:border-sage-800"><div className="text-2xl font-semibold text-sage-500">{result.skipped}</div><div className="text-xs text-sage-400">skipped (dupes)</div></div>
+            <div className="rounded-xl border border-sage-200 p-3 dark:border-sage-800"><div className="text-2xl font-semibold text-rose-500">{result.errors.length}</div><div className="text-xs text-sage-400">errors</div></div>
+          </div>
+          {result.errors.length > 0 && (
+            <div className="max-h-32 overflow-y-auto rounded-xl bg-sage-50 p-3 text-xs text-rose-600 dark:bg-sage-950 dark:text-rose-300">
+              {result.errors.slice(0, 20).map((e, i) => <div key={i}>Row {e.row}: {e.error}</div>)}
+            </div>
+          )}
+          <div className="flex justify-end"><button className="btn-primary" onClick={onClose}>Done</button></div>
+        </div>
+      ) : (
+        <div className="space-y-4">
+          <p className="text-sm text-sage-500 dark:text-sage-400">
+            Upload a CSV with a <b>name</b> column (required). Optional: generic_name, category, dosage_form, strength, unit, barcode, reorder_level, is_controlled, base_price. Existing products (by name) are skipped.
+          </p>
+          <button onClick={template} className="btn-ghost text-sm text-brand-600"><Download className="h-4 w-4" /> Download template</button>
+
+          <button onClick={() => fileRef.current?.click()}
+            className="flex w-full flex-col items-center gap-2 rounded-2xl border-2 border-dashed border-sage-300 py-8 text-sage-500 transition hover:border-brand-400 hover:text-brand-600 dark:border-sage-700">
+            <FileSpreadsheet className="h-8 w-8" />
+            <span className="text-sm font-medium">{rows ? `${rows.length} products ready` : "Choose a CSV file"}</span>
+          </button>
+          <input ref={fileRef} type="file" accept=".csv,text/csv" className="hidden" onChange={onFile} />
+
+          {rows && (
+            <div className="max-h-40 overflow-auto rounded-xl border border-sage-200 text-xs dark:border-sage-800">
+              <table className="w-full">
+                <thead><tr className="bg-sage-50 text-left text-sage-400 dark:bg-sage-950">
+                  <th className="px-2 py-1 font-medium">Name</th><th className="px-2 py-1 font-medium">Category</th><th className="px-2 py-1 font-medium">Strength</th></tr></thead>
+                <tbody>
+                  {rows.slice(0, 8).map((r, i) => (
+                    <tr key={i} className="border-t border-sage-100 dark:border-sage-800/60">
+                      <td className="px-2 py-1 text-sage-800 dark:text-sage-100">{r.name}</td>
+                      <td className="px-2 py-1 text-sage-500">{r.category || "—"}</td>
+                      <td className="px-2 py-1 text-sage-500">{r.strength || "—"}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              {rows.length > 8 && <div className="px-2 py-1 text-sage-400">…and {rows.length - 8} more</div>}
+            </div>
+          )}
+
+          {err && <div className="text-sm text-rose-600 dark:text-rose-400">{err}</div>}
+          <div className="flex justify-end gap-2">
+            <button className="btn-outline" onClick={onClose}>Cancel</button>
+            <button className="btn-primary" onClick={doImport} disabled={busy || !rows}>
+              {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />} Import {rows ? `${rows.length}` : ""}
+            </button>
+          </div>
+        </div>
+      )}
+    </Modal>
   );
 }
 

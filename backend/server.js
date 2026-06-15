@@ -76,6 +76,7 @@ app.get("/api/dashboard", protect, dashboard.summary);
 
 app.get("/api/products", protect, requireModule("inventory"), catalog.listProducts);
 app.post("/api/products", protect, requireModule("inventory"), requirePermission("inventory.manage"), catalog.createProduct);
+app.post("/api/products/import", protect, requireModule("inventory"), requirePermission("inventory.manage"), catalog.importProducts);
 app.put("/api/products/:id", protect, requireModule("inventory"), requirePermission("inventory.manage"), catalog.updateProduct);
 app.delete("/api/products/:id", protect, requireModule("inventory"), requirePermission("inventory.manage"), catalog.deactivateProduct);
 app.get("/api/batches", protect, requireModule("inventory"), catalog.listBatches);
