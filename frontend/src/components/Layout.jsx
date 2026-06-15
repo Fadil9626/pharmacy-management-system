@@ -133,7 +133,11 @@ export default function Layout() {
           </Fragment>
         ))}
       </nav>
-      <div className="border-t p-3 sidebar-divider">
+      <div className="space-y-1 border-t p-3 sidebar-divider">
+        <button onClick={toggleCollapsed} title={collapsed ? "Expand sidebar" : "Collapse sidebar"}
+          className={`nav-item hidden w-full lg:flex ${collapsed ? "justify-center !px-2" : "justify-start"}`}>
+          <PanelLeft className="h-[18px] w-[18px]" /> {!collapsed && "Collapse"}
+        </button>
         <button onClick={doLogout} title={collapsed ? "Sign out" : undefined}
           className={`nav-item w-full ${collapsed ? "justify-center !px-2" : "justify-start"}`}>
           <LogOut className="h-[18px] w-[18px]" /> {!collapsed && "Sign out"}
@@ -164,10 +168,6 @@ export default function Layout() {
         <header className="app-topbar sticky top-0 z-30 flex h-16 items-center gap-3 border-b px-4 backdrop-blur lg:px-8">
           <button className="btn-ghost !px-2 !py-2 !text-[rgb(var(--topbar-text))] lg:hidden" onClick={() => setOpen(true)}>
             <Menu className="h-5 w-5" />
-          </button>
-          <button onClick={toggleCollapsed} aria-label="Collapse sidebar" title={collapsed ? "Expand sidebar" : "Collapse sidebar"}
-            className="hidden items-center justify-center rounded-xl border border-sage-200 bg-white px-2.5 py-2 text-sage-600 transition hover:bg-sage-50 lg:flex dark:border-sage-800 dark:bg-sage-900 dark:text-sage-200 dark:hover:bg-sage-800">
-            <PanelLeft className="h-5 w-5" />
           </button>
           <div className="flex-1" />
           {moduleEnabled("branches") && (user?.role === "owner" || user?.role === "manager") && <BranchSwitcher />}
