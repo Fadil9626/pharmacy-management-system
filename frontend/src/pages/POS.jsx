@@ -6,6 +6,7 @@ import ReceiptModal from "../components/Receipt.jsx";
 import {
   Search, Plus, Minus, Trash2, ShoppingCart, Loader2, CheckCircle2, X,
   ShieldAlert, Banknote, CreditCard, Smartphone, ScanLine, HandCoins, Wallet, Lock,
+  PauseCircle, Clock3, PlayCircle,
 } from "lucide-react";
 
 const PAYMENTS = [
@@ -39,7 +40,35 @@ export default function POS() {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
   const [receipt, setReceipt] = useState(null);
+  const [showParked, setShowParked] = useState(false);
+  const [parkedCount, setParkedCount] = useState(0);
   const searchRef = useRef(null);
+
+  const loadParked = () => api("/api/pos/parked").then((r) => setParkedCount(r.length)).catch(() => {});
+
+  const park = async () => {
+    if (!cart.length) return;
+    const label = window.prompt("Label this held sale (optional):", customer || "");
+    if (label === null) return;
+    try {
+      await api("/api/pos/park", { method: "POST", body: {
+        items: cart, discount: disc, customer_id: custId || null, customer_name: customer || null,
+        customer: custObj || null, label: label || null,
+      } });
+      setCart([]); setDiscount(""); clearCustomer(); setTendered("");
+      loadParked();
+    } catch (e) { setErr(e.message); }
+  };
+
+  const resume = async (held) => {
+    setCart(held.cart.items || []);
+    setDiscount(held.cart.discount ? String(held.cart.discount) : "");
+    if (held.customer_id) { setCustId(held.customer_id); setCustObj(held.cart.customer || null); setCustomer(held.customer_name || ""); }
+    else setCustomer(held.customer_name || "");
+    await api(`/api/pos/parked/${held.id}`, { method: "DELETE" }).catch(() => {});
+    setShowParked(false);
+    loadParked();
+  };
 
   // Customer search (registered customers, when the module is on)
   useEffect(() => {
@@ -72,6 +101,7 @@ export default function POS() {
   useEffect(() => {
     load();
     checkShift();
+    loadParked();
     searchRef.current?.focus();
   }, []);
 
@@ -269,11 +299,17 @@ export default function POS() {
           <div className="flex items-center gap-2 font-display text-lg font-semibold text-sage-900 dark:text-sage-50">
             <ShoppingCart className="h-5 w-5 text-brand-600" /> Current sale
           </div>
-          {cart.length > 0 && (
-            <button onClick={() => setCart([])} className="text-xs font-medium text-sage-400 hover:text-rose-500">
-              Clear
+          <div className="flex items-center gap-3 text-xs font-medium">
+            <button onClick={() => setShowParked(true)} className="flex items-center gap-1 text-sage-400 hover:text-brand-600">
+              <Clock3 className="h-3.5 w-3.5" /> Held{parkedCount ? ` (${parkedCount})` : ""}
             </button>
-          )}
+            {cart.length > 0 && (
+              <>
+                <button onClick={park} className="flex items-center gap-1 text-sage-400 hover:text-brand-600"><PauseCircle className="h-3.5 w-3.5" /> Hold</button>
+                <button onClick={() => setCart([])} className="text-sage-400 hover:text-rose-500">Clear</button>
+              </>
+            )}
+          </div>
         </div>
 
         <div className="min-h-0 flex-1 overflow-y-auto px-3 py-2">
@@ -455,6 +491,58 @@ export default function POS() {
       {receipt && (
         <ReceiptModal receipt={receipt} cashier={user?.full_name} branch={user?.branch_name} settings={settings} onClose={() => setReceipt(null)} />
       )}
+      {showParked && (
+        <ParkedModal onClose={() => setShowParked(false)} onResume={resume} onChanged={loadParked} hasCart={cart.length > 0} />
+      )}
+    </div>
+  );
+}
+
+function ParkedModal({ onClose, onResume, onChanged, hasCart }) {
+  const [list, setList] = useState(null);
+  const load = () => api("/api/pos/parked").then(setList).catch(() => setList([]));
+  useEffect(() => { load(); }, []);
+
+  const discard = async (id) => {
+    if (!confirm("Discard this held sale?")) return;
+    await api(`/api/pos/parked/${id}`, { method: "DELETE" }).catch(() => {});
+    load(); onChanged && onChanged();
+  };
+  const resume = async (id) => {
+    const held = await api(`/api/pos/parked/${id}`);
+    onResume(held);
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+      <div className="absolute inset-0 bg-sage-950/50 backdrop-blur-sm" onClick={onClose} />
+      <div className="card relative z-10 w-full max-w-md p-6">
+        <div className="mb-4 flex items-center justify-between">
+          <h3 className="font-display text-lg font-semibold text-sage-900 dark:text-sage-50">Held sales</h3>
+          <button onClick={onClose} className="btn-ghost !px-2 !py-2"><X className="h-5 w-5" /></button>
+        </div>
+        {hasCart && <p className="mb-3 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-700 dark:bg-amber-950/30 dark:text-amber-300">Resuming replaces the current cart — hold it first if needed.</p>}
+        {!list ? (
+          <div className="flex h-24 items-center justify-center text-sage-400"><Loader2 className="h-5 w-5 animate-spin" /></div>
+        ) : list.length === 0 ? (
+          <p className="py-8 text-center text-sm text-sage-400">No held sales.</p>
+        ) : (
+          <div className="max-h-[60vh] space-y-2 overflow-y-auto">
+            {list.map((h) => (
+              <div key={h.id} className="flex items-center justify-between rounded-xl border border-sage-200 px-3 py-2.5 dark:border-sage-800">
+                <div className="min-w-0">
+                  <div className="truncate text-sm font-medium text-sage-900 dark:text-sage-50">{h.label || h.customer_name || `Hold #${h.id}`}</div>
+                  <div className="text-xs text-sage-400">{h.item_count} items · {money(h.total)} · {new Date(h.created_at).toLocaleTimeString()}</div>
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <button onClick={() => resume(h.id)} className="btn-primary !px-3 !py-1.5 text-xs"><PlayCircle className="h-3.5 w-3.5" /> Resume</button>
+                  <button onClick={() => discard(h.id)} className="btn-ghost !px-2 !py-1.5 text-sage-400 hover:text-rose-500"><Trash2 className="h-4 w-4" /></button>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
     </div>
   );
 }

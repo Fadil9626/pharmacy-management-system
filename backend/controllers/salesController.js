@@ -393,6 +393,66 @@ exports.createReturn = async (req, res) => {
   }
 };
 
+// ── Held / parked sales ─────────────────────────────────────
+exports.park = async (req, res) => {
+  const branchId = effectiveBranch(req);
+  const { items, discount = 0, customer_id, customer_name, customer, label } = req.body || {};
+  if (!Array.isArray(items) || !items.length) return res.status(400).json({ message: "Nothing to hold" });
+  try {
+    const { rows } = await pool.query(
+      `INSERT INTO parked_sales (branch_id, user_id, customer_id, customer_name, label, cart)
+       VALUES ($1,$2,$3,$4,$5,$6) RETURNING id, created_at`,
+      [branchId, req.user.id, customer_id || null, customer_name || null, label || null,
+       JSON.stringify({ items, discount: Number(discount) || 0, customer: customer || null })]
+    );
+    res.status(201).json({ id: rows[0].id });
+  } catch (e) {
+    res.status(500).json({ message: e.message });
+  }
+};
+
+exports.listParked = async (req, res) => {
+  const branchId = effectiveBranch(req);
+  try {
+    const { rows } = await pool.query(
+      `SELECT p.id, p.customer_name, p.label, p.cart, p.created_at, u.full_name AS cashier
+       FROM parked_sales p LEFT JOIN users u ON p.user_id = u.id
+       WHERE ($1::int IS NULL OR p.branch_id = $1)
+       ORDER BY p.created_at DESC LIMIT 50`,
+      [branchId]
+    );
+    res.json(rows.map((r) => {
+      const items = r.cart?.items || [];
+      return {
+        id: r.id, customer_name: r.customer_name, label: r.label, cashier: r.cashier, created_at: r.created_at,
+        item_count: items.length,
+        total: items.reduce((s, i) => s + i.qty * i.price, 0) - (r.cart?.discount || 0),
+      };
+    }));
+  } catch (e) {
+    res.status(500).json({ message: e.message });
+  }
+};
+
+exports.getParked = async (req, res) => {
+  try {
+    const { rows } = await pool.query("SELECT * FROM parked_sales WHERE id = $1", [req.params.id]);
+    if (!rows.length) return res.status(404).json({ message: "Held sale not found" });
+    res.json(rows[0]);
+  } catch (e) {
+    res.status(500).json({ message: e.message });
+  }
+};
+
+exports.deleteParked = async (req, res) => {
+  try {
+    await pool.query("DELETE FROM parked_sales WHERE id = $1", [req.params.id]);
+    res.json({ success: true });
+  } catch (e) {
+    res.status(500).json({ message: e.message });
+  }
+};
+
 exports.listReturns = async (req, res) => {
   const branchId = branchOf(req);
   try {

@@ -153,6 +153,11 @@ app.get("/api/sales", protect, requireModule("pos"), sales.listSales);
 app.get("/api/sales/:id", protect, requireModule("pos"), sales.getSale);
 app.post("/api/sales/:id/return", protect, requireModule("pos"), requirePermission("pos.refund"), sales.createReturn);
 app.get("/api/returns", protect, requireModule("pos"), sales.listReturns);
+// Held / parked sales
+app.post("/api/pos/park", protect, requireModule("pos"), requirePermission("pos.sell"), sales.park);
+app.get("/api/pos/parked", protect, requireModule("pos"), sales.listParked);
+app.get("/api/pos/parked/:id", protect, requireModule("pos"), sales.getParked);
+app.delete("/api/pos/parked/:id", protect, requireModule("pos"), sales.deleteParked);
 
 // Purchasing
 app.post("/api/suppliers", protect, authorize("owner", "manager"), purchasing.createSupplier);
