@@ -41,23 +41,21 @@ export default function POS() {
   const [err, setErr] = useState("");
   const [receipt, setReceipt] = useState(null);
   const [showParked, setShowParked] = useState(false);
+  const [showHold, setShowHold] = useState(false);
   const [parkedCount, setParkedCount] = useState(0);
   const searchRef = useRef(null);
 
   const loadParked = () => api("/api/pos/parked").then((r) => setParkedCount(r.length)).catch(() => {});
 
-  const park = async () => {
-    if (!cart.length) return;
-    const label = window.prompt("Label this held sale (optional):", customer || "");
-    if (label === null) return;
+  const doPark = async (label) => {
     try {
       await api("/api/pos/park", { method: "POST", body: {
         items: cart, discount: disc, customer_id: custId || null, customer_name: customer || null,
         customer: custObj || null, label: label || null,
       } });
-      setCart([]); setDiscount(""); clearCustomer(); setTendered("");
+      setCart([]); setDiscount(""); clearCustomer(); setTendered(""); setShowHold(false);
       loadParked();
-    } catch (e) { setErr(e.message); }
+    } catch (e) { setErr(e.message); setShowHold(false); }
   };
 
   const resume = async (held) => {
@@ -309,7 +307,7 @@ export default function POS() {
             </button>
             {cart.length > 0 && (
               <>
-                <button onClick={park} className="flex items-center gap-1 text-sage-400 hover:text-brand-600"><PauseCircle className="h-3.5 w-3.5" /> Hold</button>
+                <button onClick={() => setShowHold(true)} className="flex items-center gap-1 text-sage-400 hover:text-brand-600"><PauseCircle className="h-3.5 w-3.5" /> Hold</button>
                 <button onClick={() => setCart([])} className="text-sage-400 hover:text-rose-500">Clear</button>
               </>
             )}
@@ -499,18 +497,52 @@ export default function POS() {
       {showParked && (
         <ParkedModal onClose={() => setShowParked(false)} onResume={resume} onChanged={loadParked} hasCart={cart.length > 0} />
       )}
+      {showHold && (
+        <HoldModal defaultLabel={customer} total={total} onClose={() => setShowHold(false)} onHold={doPark} />
+      )}
+    </div>
+  );
+}
+
+function HoldModal({ defaultLabel, total, onClose, onHold }) {
+  const [label, setLabel] = useState(defaultLabel || "");
+  const [busy, setBusy] = useState(false);
+  const submit = async (e) => {
+    e.preventDefault();
+    setBusy(true);
+    await onHold(label.trim());
+  };
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+      <div className="absolute inset-0 bg-sage-950/50 backdrop-blur-sm" onClick={onClose} />
+      <form onSubmit={submit} className="card relative z-10 w-full max-w-sm p-6">
+        <div className="mb-4 flex items-center gap-2 text-brand-600">
+          <PauseCircle className="h-5 w-5" />
+          <h3 className="font-display text-lg font-semibold text-sage-900 dark:text-sage-50">Hold this sale</h3>
+        </div>
+        <p className="mb-4 text-sm text-sage-500 dark:text-sage-400">Set it aside ({money(total)}) and resume it later from “Held”.</p>
+        <label className="label">Label <span className="font-normal text-sage-400">(optional)</span></label>
+        <input className="input" value={label} onChange={(e) => setLabel(e.target.value)} placeholder="e.g. customer name or note" autoFocus />
+        <div className="mt-5 flex justify-end gap-2">
+          <button type="button" className="btn-outline" onClick={onClose}>Cancel</button>
+          <button type="submit" className="btn-primary" disabled={busy}>
+            {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <PauseCircle className="h-4 w-4" />} Hold sale
+          </button>
+        </div>
+      </form>
     </div>
   );
 }
 
 function ParkedModal({ onClose, onResume, onChanged, hasCart }) {
   const [list, setList] = useState(null);
+  const [confirmId, setConfirmId] = useState(null);
   const load = () => api("/api/pos/parked").then(setList).catch(() => setList([]));
   useEffect(() => { load(); }, []);
 
   const discard = async (id) => {
-    if (!confirm("Discard this held sale?")) return;
     await api(`/api/pos/parked/${id}`, { method: "DELETE" }).catch(() => {});
+    setConfirmId(null);
     load(); onChanged && onChanged();
   };
   const resume = async (id) => {
@@ -540,8 +572,17 @@ function ParkedModal({ onClose, onResume, onChanged, hasCart }) {
                   <div className="text-xs text-sage-400">{h.item_count} items · {money(h.total)} · {new Date(h.created_at).toLocaleTimeString()}</div>
                 </div>
                 <div className="flex items-center gap-1.5">
-                  <button onClick={() => resume(h.id)} className="btn-primary !px-3 !py-1.5 text-xs"><PlayCircle className="h-3.5 w-3.5" /> Resume</button>
-                  <button onClick={() => discard(h.id)} className="btn-ghost !px-2 !py-1.5 text-sage-400 hover:text-rose-500"><Trash2 className="h-4 w-4" /></button>
+                  {confirmId === h.id ? (
+                    <>
+                      <button onClick={() => discard(h.id)} className="btn-ghost !px-2 !py-1.5 text-xs font-medium text-rose-500">Discard?</button>
+                      <button onClick={() => setConfirmId(null)} className="btn-ghost !px-2 !py-1.5 text-xs text-sage-400">No</button>
+                    </>
+                  ) : (
+                    <>
+                      <button onClick={() => resume(h.id)} className="btn-primary !px-3 !py-1.5 text-xs"><PlayCircle className="h-3.5 w-3.5" /> Resume</button>
+                      <button onClick={() => setConfirmId(h.id)} className="btn-ghost !px-2 !py-1.5 text-sage-400 hover:text-rose-500"><Trash2 className="h-4 w-4" /></button>
+                    </>
+                  )}
                 </div>
               </div>
             ))}

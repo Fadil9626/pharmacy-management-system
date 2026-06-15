@@ -30,7 +30,7 @@ export default function Staff() {
     try {
       await api(`/api/users/${u.id}`, { method: "PATCH", body: { is_active: !u.is_active } });
       load();
-    } catch (e) { alert(e.message); }
+    } catch (e) { setErr(e.message); }
   };
 
   return (

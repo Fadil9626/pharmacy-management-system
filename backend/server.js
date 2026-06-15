@@ -167,6 +167,8 @@ app.post("/api/purchase-orders", protect, requireModule("purchasing"), requirePe
 app.get("/api/purchase-orders/:id", protect, requireModule("purchasing"), purchasing.getPO);
 app.post("/api/purchase-orders/:id/receive", protect, requireModule("purchasing"), requirePermission("purchasing.receive"), purchasing.receivePO);
 app.post("/api/purchase-orders/:id/cancel", protect, requireModule("purchasing"), requirePermission("purchasing.manage"), purchasing.cancelPO);
+app.get("/api/purchasing/payables", protect, requireModule("purchasing"), purchasing.listPayables);
+app.post("/api/purchase-orders/:id/pay", protect, requireModule("purchasing"), requirePermission("purchasing.manage"), purchasing.payPO);
 
 // Reports
 app.get("/api/reports/sales", protect, requireModule("reports"), requirePermission("reports.view"), reports.sales);

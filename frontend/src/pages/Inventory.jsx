@@ -3,6 +3,7 @@ import { api } from "../lib/api.js";
 import { useAuth } from "../context/AuthContext.jsx";
 import { money } from "../lib/money.js";
 import { parseCSV, downloadCSV } from "../lib/csv.js";
+import ConfirmModal from "../components/Confirm.jsx";
 import {
   Search, Plus, PackagePlus, X, Loader2, AlertTriangle, CalendarClock,
   Boxes, ShieldAlert, Pencil, Layers, Trash2, SlidersHorizontal, Upload, Download, CheckCircle2, FileSpreadsheet,
@@ -73,10 +74,11 @@ export default function Inventory() {
       .catch((e) => setErr(e.message));
   const loadCats = () => api("/api/categories").then(setCategories).catch(() => {});
 
-  const deactivate = async (p) => {
-    if (!confirm(`Deactivate "${p.name}"? It will be hidden from inventory and the till.`)) return;
-    try { await api(`/api/products/${p.id}`, { method: "DELETE" }); load(); }
-    catch (e) { alert(e.message); }
+  const [confirmDeactivate, setConfirmDeactivate] = useState(null);
+  const deactivate = (p) => setConfirmDeactivate(p);
+  const doDeactivate = async () => {
+    await api(`/api/products/${confirmDeactivate.id}`, { method: "DELETE" });
+    setConfirmDeactivate(null); load();
   };
 
   useEffect(() => {
@@ -276,6 +278,11 @@ export default function Inventory() {
       )}
       {showImport && (
         <ImportModal onClose={() => setShowImport(false)} onDone={() => { load(); loadCats(); }} />
+      )}
+      {confirmDeactivate && (
+        <ConfirmModal danger title="Deactivate product" confirmLabel="Deactivate"
+          message={`"${confirmDeactivate.name}" will be hidden from inventory and the till. You can re-add it later.`}
+          onConfirm={doDeactivate} onClose={() => setConfirmDeactivate(null)} />
       )}
       {receiveFor && (
         <ReceiveModal
@@ -651,10 +658,11 @@ function CategoriesManager({ onClose, onChanged }) {
     onChanged && onChanged();
   };
 
-  const deactivate = async (c) => {
-    if (!confirm(`Deactivate "${c.name}"? Products keep their link but it's hidden from pickers.`)) return;
-    try { await api(`/api/categories/${c.id}`, { method: "DELETE" }); load(); onChanged && onChanged(); }
-    catch (e) { alert(e.message); }
+  const [confirmCat, setConfirmCat] = useState(null);
+  const deactivate = (c) => setConfirmCat(c);
+  const doDeactivateCat = async () => {
+    try { await api(`/api/categories/${confirmCat.id}`, { method: "DELETE" }); setConfirmCat(null); load(); onChanged && onChanged(); }
+    catch (e) { setErr(e.message); setConfirmCat(null); }
   };
 
   return (
@@ -714,6 +722,11 @@ function CategoriesManager({ onClose, onChanged }) {
             )}
           </div>
         </>
+      )}
+      {confirmCat && (
+        <ConfirmModal danger title="Deactivate category" confirmLabel="Deactivate"
+          message={`"${confirmCat.name}" will be hidden from pickers. Products keep their link.`}
+          onConfirm={doDeactivateCat} onClose={() => setConfirmCat(null)} />
       )}
     </Modal>
   );

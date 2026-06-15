@@ -189,6 +189,68 @@ exports.receivePO = async (req, res) => {
   }
 };
 
+// ── Accounts payable ───────────────────────────────────────
+// Received POs with an outstanding balance, plus per-supplier totals.
+exports.listPayables = async (req, res) => {
+  const branchId = branchOf(req);
+  try {
+    const { rows } = await pool.query(
+      `SELECT po.id, po.po_number, po.total_cost, po.amount_paid,
+              (po.total_cost - po.amount_paid)::float AS outstanding,
+              po.received_at, s.id AS supplier_id, s.name AS supplier_name
+       FROM purchase_orders po
+       LEFT JOIN suppliers s ON po.supplier_id = s.id
+       WHERE po.status = 'received' AND (po.total_cost - po.amount_paid) > 0.005
+         AND ($1::int IS NULL OR po.branch_id = $1)
+       ORDER BY po.received_at`,
+      [branchId]
+    );
+    const bySupplier = {};
+    rows.forEach((r) => {
+      const k = r.supplier_name || "—";
+      bySupplier[k] = (bySupplier[k] || 0) + Number(r.outstanding);
+    });
+    res.json({
+      payables: rows,
+      total_owed: rows.reduce((s, r) => s + Number(r.outstanding), 0),
+      by_supplier: Object.entries(bySupplier).map(([name, amount]) => ({ name, amount })).sort((a, b) => b.amount - a.amount),
+    });
+  } catch (e) {
+    res.status(500).json({ message: e.message });
+  }
+};
+
+// Record a payment against a received PO.
+exports.payPO = async (req, res) => {
+  const poId = Number(req.params.id);
+  const { amount, method = "cash", note } = req.body || {};
+  const amt = Number(amount);
+  if (!amt || amt <= 0) return res.status(400).json({ message: "A positive amount is required" });
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const po = await client.query("SELECT * FROM purchase_orders WHERE id = $1 FOR UPDATE", [poId]);
+    if (!po.rows.length) throw new Error("Order not found");
+    const p = po.rows[0];
+    if (p.status !== "received") throw new Error("Only received orders can be paid");
+    const outstanding = Number(p.total_cost) - Number(p.amount_paid);
+    if (amt > outstanding + 0.01) throw new Error(`Only ${outstanding.toFixed(2)} is outstanding on this order`);
+    await client.query("UPDATE purchase_orders SET amount_paid = amount_paid + $1 WHERE id = $2", [amt, poId]);
+    await client.query(
+      "INSERT INTO supplier_payments (supplier_id, po_id, amount, method, note, user_id) VALUES ($1,$2,$3,$4,$5,$6)",
+      [p.supplier_id, poId, amt, method, note || null, req.user.id]
+    );
+    await client.query("COMMIT");
+    logAudit(req, "supplier_payment", "purchase_order", poId, { amount: amt, method });
+    res.json({ success: true, paid: Number(p.amount_paid) + amt, outstanding: outstanding - amt });
+  } catch (e) {
+    await client.query("ROLLBACK").catch(() => {});
+    res.status(400).json({ message: e.message });
+  } finally {
+    client.release();
+  }
+};
+
 exports.cancelPO = async (req, res) => {
   try {
     const { rows } = await pool.query(

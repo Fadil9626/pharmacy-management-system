@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useState } from "react";
 import { api } from "../lib/api.js";
 import { money } from "../lib/money.js";
+import ConfirmModal from "../components/Confirm.jsx";
 import {
   Truck, Plus, X, Loader2, PackageCheck, Trash2, ClipboardList,
-  AlertTriangle, Building2, ChevronRight, Ban,
+  AlertTriangle, Building2, ChevronRight, Ban, Wallet, HandCoins,
 } from "lucide-react";
 
 const STATUS = {
@@ -16,6 +17,7 @@ const STATUS = {
 const TABS = [
   { key: "orders", label: "Orders", icon: ClipboardList },
   { key: "reorder", label: "Reorder", icon: AlertTriangle },
+  { key: "payables", label: "Payables", icon: Wallet },
   { key: "suppliers", label: "Suppliers", icon: Building2 },
 ];
 
@@ -96,6 +98,7 @@ export default function Purchasing() {
           onOrder={(picks) => setBuilder({ prefill: picks })}
         />
       )}
+      {tab === "payables" && <PayablesTab />}
       {tab === "suppliers" && (
         <SuppliersTab suppliers={suppliers} onReload={loadRefs} />
       )}
@@ -129,15 +132,17 @@ export default function Purchasing() {
 }
 
 function OrdersTab({ pos, onReceive, onReload }) {
-  const cancel = async (id) => {
+  const [cancelId, setCancelId] = useState(null);
+  const [err, setErr] = useState("");
+  const cancel = async () => {
     try {
-      await api(`/api/purchase-orders/${id}/cancel`, { method: "POST" });
-      onReload();
-    } catch (e) {
-      alert(e.message);
-    }
+      await api(`/api/purchase-orders/${cancelId}/cancel`, { method: "POST" });
+      setCancelId(null); onReload();
+    } catch (e) { setErr(e.message); setCancelId(null); }
   };
   return (
+    <>
+    {err && <div className="card mb-3 border-rose-200 p-3 text-sm text-rose-600 dark:border-rose-900/50 dark:text-rose-300">{err}</div>}
     <div className="card overflow-hidden">
       <div className="overflow-x-auto">
         <table className="w-full text-sm">
@@ -174,7 +179,7 @@ function OrdersTab({ pos, onReceive, onReload }) {
                           <button className="btn-primary !px-3 !py-1.5 text-xs" onClick={() => onReceive(po.id)}>
                             <PackageCheck className="h-3.5 w-3.5" /> Receive
                           </button>
-                          <button className="btn-ghost !px-2 !py-1.5 text-xs text-sage-400 hover:text-rose-500" onClick={() => cancel(po.id)}>
+                          <button className="btn-ghost !px-2 !py-1.5 text-xs text-sage-400 hover:text-rose-500" onClick={() => setCancelId(po.id)}>
                             <Ban className="h-3.5 w-3.5" />
                           </button>
                         </>
@@ -191,6 +196,11 @@ function OrdersTab({ pos, onReceive, onReload }) {
         </table>
       </div>
     </div>
+    {cancelId && (
+      <ConfirmModal danger title="Cancel order" confirmLabel="Cancel order"
+        message="This purchase order will be marked cancelled." onConfirm={cancel} onClose={() => setCancelId(null)} />
+    )}
+    </>
   );
 }
 
@@ -300,6 +310,112 @@ function SuppliersTab({ suppliers, onReload }) {
         </button>
       </form>
     </div>
+  );
+}
+
+function PayablesTab() {
+  const [data, setData] = useState(null);
+  const [payFor, setPayFor] = useState(null);
+  const [err, setErr] = useState("");
+  const load = () => api("/api/purchasing/payables").then(setData).catch((e) => setErr(e.message));
+  useEffect(() => { load(); }, []);
+
+  if (err) return <div className="card border-rose-200 p-4 text-sm text-rose-600 dark:border-rose-900/50 dark:text-rose-300">{err}</div>;
+  if (!data) return <div className="flex h-32 items-center justify-center text-sage-400"><Loader2 className="h-5 w-5 animate-spin" /></div>;
+
+  return (
+    <div className="space-y-4">
+      <div className="grid gap-4 sm:grid-cols-2">
+        <div className="card p-5">
+          <span className="grid h-11 w-11 place-items-center rounded-xl bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300"><Wallet className="h-5 w-5" /></span>
+          <div className="mt-3 text-2xl font-semibold text-sage-900 dark:text-sage-50">{money(data.total_owed)}</div>
+          <div className="text-sm text-sage-500 dark:text-sage-400">owed to suppliers</div>
+        </div>
+        <div className="card p-5">
+          <div className="mb-2 text-xs font-medium uppercase tracking-wide text-sage-400">By supplier</div>
+          {data.by_supplier.length === 0 ? <p className="text-sm text-sage-400">All settled 🎉</p> : (
+            <div className="space-y-1.5">
+              {data.by_supplier.slice(0, 5).map((s, i) => (
+                <div key={i} className="flex justify-between text-sm">
+                  <span className="text-sage-700 dark:text-sage-200">{s.name}</span>
+                  <span className="font-medium text-sage-900 dark:text-sage-50">{money(s.amount)}</span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+
+      <div className="card overflow-hidden">
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b border-sage-200 text-left text-xs uppercase tracking-wide text-sage-400 dark:border-sage-800">
+                <th className="px-5 py-3 font-medium">Order</th>
+                <th className="px-5 py-3 font-medium">Supplier</th>
+                <th className="px-5 py-3 font-medium text-right">Total</th>
+                <th className="px-5 py-3 font-medium text-right">Paid</th>
+                <th className="px-5 py-3 font-medium text-right">Outstanding</th>
+                <th className="px-5 py-3 font-medium text-right"></th>
+              </tr>
+            </thead>
+            <tbody>
+              {data.payables.length === 0 ? (
+                <tr><td colSpan={6} className="px-5 py-12 text-center text-sage-400">No outstanding bills — everything's paid.</td></tr>
+              ) : data.payables.map((p) => (
+                <tr key={p.id} className="border-b border-sage-100 last:border-0 dark:border-sage-800/60">
+                  <td className="px-5 py-3.5 font-semibold text-sage-900 dark:text-sage-50">{p.po_number}</td>
+                  <td className="px-5 py-3.5 text-sage-600 dark:text-sage-300">{p.supplier_name || "—"}</td>
+                  <td className="px-5 py-3.5 text-right text-sage-500">{money(p.total_cost)}</td>
+                  <td className="px-5 py-3.5 text-right text-sage-500">{money(p.amount_paid)}</td>
+                  <td className="px-5 py-3.5 text-right font-semibold text-amber-600 dark:text-amber-400">{money(p.outstanding)}</td>
+                  <td className="px-5 py-3.5 text-right">
+                    <button className="btn-primary !px-3 !py-1.5 text-xs" onClick={() => setPayFor(p)}><HandCoins className="h-3.5 w-3.5" /> Pay</button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      {payFor && <PayModal po={payFor} onClose={() => setPayFor(null)} onPaid={() => { setPayFor(null); load(); }} />}
+    </div>
+  );
+}
+
+function PayModal({ po, onClose, onPaid }) {
+  const [amount, setAmount] = useState(po.outstanding);
+  const [method, setMethod] = useState("cash");
+  const [note, setNote] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+  const save = async (e) => {
+    e.preventDefault();
+    setBusy(true); setErr("");
+    try { await api(`/api/purchase-orders/${po.id}/pay`, { method: "POST", body: { amount: Number(amount), method, note } }); onPaid(); }
+    catch (e) { setErr(e.message); setBusy(false); }
+  };
+  return (
+    <Modal title={`Pay ${po.po_number} · ${po.supplier_name || ""}`} onClose={onClose}>
+      <form onSubmit={save} className="space-y-4">
+        <p className="text-sm text-sage-500 dark:text-sage-400">Outstanding: <b>{money(po.outstanding)}</b></p>
+        <div className="grid grid-cols-2 gap-3">
+          <div><label className="label">Amount</label><input type="number" min="0" step="0.01" max={po.outstanding} className="input" value={amount} onChange={(e) => setAmount(e.target.value)} autoFocus /></div>
+          <div><label className="label">Method</label>
+            <select className="input" value={method} onChange={(e) => setMethod(e.target.value)}>
+              <option value="cash">Cash</option><option value="bank">Bank transfer</option><option value="cheque">Cheque</option><option value="mobile">Mobile</option>
+            </select>
+          </div>
+        </div>
+        <div><label className="label">Note</label><input className="input" value={note} onChange={(e) => setNote(e.target.value)} placeholder="optional reference" /></div>
+        {err && <div className="text-sm text-rose-600 dark:text-rose-400">{err}</div>}
+        <div className="flex justify-end gap-2">
+          <button type="button" className="btn-outline" onClick={onClose}>Cancel</button>
+          <button type="submit" className="btn-primary" disabled={busy}>{busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <HandCoins className="h-4 w-4" />} Record payment</button>
+        </div>
+      </form>
+    </Modal>
   );
 }
 

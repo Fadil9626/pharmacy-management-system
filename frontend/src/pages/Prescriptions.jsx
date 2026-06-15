@@ -184,9 +184,9 @@ function RxDetail({ id, onBack }) {
   useEffect(() => { load(); }, [id]);
 
   const act = async (path) => {
-    setBusy(true);
+    setBusy(true); setErr("");
     try { await api(`/api/prescriptions/${id}/${path}`, { method: "POST" }); load(); }
-    catch (e) { alert(e.message); } finally { setBusy(false); }
+    catch (e) { setErr(e.message); } finally { setBusy(false); }
   };
 
   if (err) return <div className="card border-rose-200 p-4 text-sm text-rose-600">{err}</div>;
