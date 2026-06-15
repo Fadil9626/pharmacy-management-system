@@ -111,6 +111,7 @@ app.put("/api/permissions/:role", protect, authorize("owner"), permissions.updat
 // Customers (licensable module)
 app.get("/api/customers", protect, requireModule("customers"), customers.list);
 app.get("/api/customers/:id", protect, requireModule("customers"), customers.get);
+app.get("/api/customers/:id/statement", protect, requireModule("customers"), customers.statement);
 app.post("/api/customers", protect, requireModule("customers"), requirePermission("customers.manage"), customers.create);
 app.patch("/api/customers/:id", protect, requireModule("customers"), requirePermission("customers.manage"), customers.update);
 app.post("/api/customers/:id/payment", protect, requireModule("customers"), requirePermission("customers.payment"), customers.recordPayment);

@@ -79,6 +79,70 @@ exports.update = async (req, res) => {
   }
 };
 
+// Account statement: a running ledger of on-account charges and repayments over
+// a date range, reconstructed from transactions (opening balance = net activity
+// before `from`). Used for the printable/exportable customer statement.
+exports.statement = async (req, res) => {
+  const id = Number(req.params.id);
+  const from = req.query.from ? `${req.query.from} 00:00:00` : "1970-01-01";
+  const to = req.query.to ? `${req.query.to} 23:59:59` : "2999-12-31";
+  try {
+    const c = await pool.query("SELECT id, name, phone, email, address, balance, credit_limit FROM customers WHERE id = $1", [id]);
+    if (!c.rows.length) return res.status(404).json({ message: "Customer not found" });
+
+    // On-account charges = the 'account' tender portion of each sale.
+    const charges = await pool.query(
+      `SELECT s.id, s.receipt_no, s.created_at, SUM(sp.amount)::numeric AS amount
+       FROM sales s JOIN sale_payments sp ON sp.sale_id = s.id AND sp.method = 'account'
+       WHERE s.customer_id = $1
+       GROUP BY s.id, s.receipt_no, s.created_at`,
+      [id]
+    );
+    const pays = await pool.query(
+      `SELECT cp.id, cp.created_at, cp.amount, cp.method, cp.note, u.full_name AS taken_by
+       FROM customer_payments cp LEFT JOIN users u ON cp.user_id = u.id
+       WHERE cp.customer_id = $1`,
+      [id]
+    );
+
+    const events = [
+      ...charges.rows.map((r) => ({ at: new Date(r.created_at), type: "charge", ref: r.receipt_no, amount: Number(r.amount), label: "On-account sale" })),
+      ...pays.rows.map((r) => ({ at: new Date(r.created_at), type: "payment", ref: null, amount: Number(r.amount), label: `Payment (${r.method})${r.note ? " — " + r.note : ""}`, taken_by: r.taken_by })),
+    ].sort((a, b) => a.at - b.at);
+
+    const fromTs = new Date(from), toTs = new Date(to);
+    let opening = 0;
+    for (const e of events) if (e.at < fromTs) opening += e.type === "charge" ? e.amount : -e.amount;
+
+    let running = opening;
+    const lines = [];
+    for (const e of events) {
+      if (e.at < fromTs || e.at > toTs) continue;
+      running += e.type === "charge" ? e.amount : -e.amount;
+      lines.push({
+        date: e.at, type: e.type, ref: e.ref, label: e.label, taken_by: e.taken_by || null,
+        charge: e.type === "charge" ? e.amount : 0,
+        payment: e.type === "payment" ? e.amount : 0,
+        balance: Math.round(running * 100) / 100,
+      });
+    }
+    const totalCharges = lines.reduce((s, l) => s + l.charge, 0);
+    const totalPayments = lines.reduce((s, l) => s + l.payment, 0);
+    res.json({
+      customer: c.rows[0],
+      from: req.query.from || null, to: req.query.to || null,
+      opening_balance: Math.round(opening * 100) / 100,
+      closing_balance: Math.round(running * 100) / 100,
+      total_charges: Math.round(totalCharges * 100) / 100,
+      total_payments: Math.round(totalPayments * 100) / 100,
+      current_balance: Number(c.rows[0].balance),
+      lines,
+    });
+  } catch (e) {
+    res.status(500).json({ message: e.message });
+  }
+};
+
 // Customer pays down their account balance.
 exports.recordPayment = async (req, res) => {
   const id = Number(req.params.id);
