@@ -140,11 +140,16 @@ export default function Settings() {
               </Field>
               <p className="text-xs text-sage-400">Set 0 to disable tax.</p>
             </Section>
-            <Section icon={Star} title="Loyalty" hint="Points earned by registered customers.">
-              <Field label={`Points per ${f.currency_symbol || "$"}1 spent`}>
-                <input type="number" min="0" step="0.01" className="input sm:w-40" value={f.loyalty_points_per_unit ?? 1} onChange={set("loyalty_points_per_unit")} disabled={!canEdit} />
-              </Field>
-              <p className="text-xs text-sage-400">e.g. 1 = a {money(100)} sale earns 100 points. Set 0 to turn loyalty off.</p>
+            <Section icon={Star} title="Loyalty" hint="Points earned and redeemed by registered customers.">
+              <div className="grid gap-3 sm:grid-cols-2">
+                <Field label={`Points earned per ${f.currency_symbol || "$"}1`}>
+                  <input type="number" min="0" step="0.01" className="input" value={f.loyalty_points_per_unit ?? 1} onChange={set("loyalty_points_per_unit")} disabled={!canEdit} />
+                </Field>
+                <Field label={`Value of 1 point when redeemed (${f.currency_symbol || "$"})`}>
+                  <input type="number" min="0" step="0.0001" className="input" value={f.loyalty_redeem_value ?? 0} onChange={set("loyalty_redeem_value")} disabled={!canEdit} />
+                </Field>
+              </div>
+              <p className="text-xs text-sage-400">Earn: 1 = a {money(100)} sale earns 100 points (0 = off). Redeem: e.g. 0.01 means 100 points = {money(1)} at the till (0 = redemption off).</p>
             </Section>
           </>
         )}

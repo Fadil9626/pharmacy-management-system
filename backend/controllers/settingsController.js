@@ -17,7 +17,7 @@ exports.update = async (req, res) => {
     pharmacy_name, currency_code, currency_symbol,
     tax_percent, receipt_footer, receipt_header, address, phone, email, website,
     base_currency, pricing_mode,
-    near_expiry_months, low_stock_default, loyalty_points_per_unit,
+    near_expiry_months, low_stock_default, loyalty_points_per_unit, loyalty_redeem_value,
     logo, theme, brand_color, theme_config,
   } = req.body || {};
   if (pricing_mode && !["fixed", "market"].includes(pricing_mode))
@@ -44,6 +44,7 @@ exports.update = async (req, res) => {
          theme                   = COALESCE($17, theme),
          brand_color             = COALESCE($18, brand_color),
          theme_config            = COALESCE($19::jsonb, theme_config),
+         loyalty_redeem_value    = COALESCE($20, loyalty_redeem_value),
          updated_at              = NOW()
        WHERE id = 1 RETURNING *`,
       [
@@ -66,6 +67,7 @@ exports.update = async (req, res) => {
         theme || null,
         brand_color || null,
         theme_config ? JSON.stringify(theme_config) : null,
+        numOrNull(loyalty_redeem_value),
       ]
     );
     logAudit(req, "settings_update", "settings", 1, { fields: Object.keys(req.body || {}) });

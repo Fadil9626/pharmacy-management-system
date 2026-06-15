@@ -65,9 +65,10 @@ exports.createSale = async (req, res) => {
   try {
     await client.query("BEGIN");
 
-    const cfg = await client.query("SELECT tax_percent, loyalty_points_per_unit FROM settings WHERE id = 1");
+    const cfg = await client.query("SELECT tax_percent, loyalty_points_per_unit, loyalty_redeem_value FROM settings WHERE id = 1");
     const taxPct = Number(cfg.rows[0]?.tax_percent || 0);
     const loyaltyRate = Number(cfg.rows[0]?.loyalty_points_per_unit ?? 1);
+    const redeemValue = Number(cfg.rows[0]?.loyalty_redeem_value || 0);
 
     // Live pricing context (mode + current market rate) read inside the txn.
     const ctx = await pricingContext(client);
@@ -139,10 +140,16 @@ exports.createSale = async (req, res) => {
       payments = [{ method: payment_method, amount: total }];
     }
     const accountPortion = payments.filter((p) => p.method === "account").reduce((s, p) => s + p.amount, 0);
+    const loyaltyAmount = payments.filter((p) => p.method === "loyalty").reduce((s, p) => s + p.amount, 0);
+    const pointsUsed = loyaltyAmount > 0 && redeemValue > 0 ? Math.round(loyaltyAmount / redeemValue) : 0;
     const effectiveMethod = payments.length > 1 ? "split" : payments[0].method;
 
     if (accountPortion > 0 && !(await userCan(req.user.role, "pos.account")))
       throw new Error("You don't have permission to sell on account");
+    if (loyaltyAmount > 0) {
+      if (redeemValue <= 0) throw new Error("Loyalty redemption is not enabled");
+      if (!customer_id) throw new Error("Loyalty redemption requires a registered customer");
+    }
 
     // Cash tendered (for change) when paying with a single cash payment.
     const paidIn = amount_paid != null && amount_paid !== "" ? Number(amount_paid) : null;
@@ -162,6 +169,9 @@ exports.createSale = async (req, res) => {
         if (Number(c.credit_limit) > 0 && newBal > Number(c.credit_limit) + 1e-9) {
           throw new Error(`Exceeds credit limit — owed ${newBal.toFixed(2)} of ${Number(c.credit_limit).toFixed(2)}`);
         }
+      }
+      if (pointsUsed > 0 && Number(c.loyalty_points) < pointsUsed) {
+        throw new Error(`Not enough points — ${c.loyalty_points} available, ${pointsUsed} needed`);
       }
     } else if (accountPortion > 0) {
       throw new Error("Account payment requires a registered customer");
@@ -211,9 +221,9 @@ exports.createSale = async (req, res) => {
            balance = balance + $1,
            total_spent = total_spent + $2,
            visit_count = visit_count + 1,
-           loyalty_points = loyalty_points + $3
+           loyalty_points = GREATEST(0, loyalty_points + $3 - $5)
          WHERE id = $4`,
-        [addBal, total, points, customer_id]
+        [addBal, total, points, customer_id, pointsUsed]
       );
     }
 

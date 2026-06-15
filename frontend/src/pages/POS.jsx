@@ -36,7 +36,7 @@ export default function POS() {
   const [custResults, setCustResults] = useState([]);
   const [tendered, setTendered] = useState("");
   const [splitMode, setSplitMode] = useState(false);
-  const [split, setSplit] = useState({ cash: "", card: "", mobile: "", account: "" });
+  const [split, setSplit] = useState({ cash: "", card: "", mobile: "", account: "", loyalty: "" });
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
   const [receipt, setReceipt] = useState(null);
@@ -166,10 +166,14 @@ export default function POS() {
   const change = !splitMode && payment === "cash" && tend > 0 ? Math.max(0, tend - total) : null;
   const short = !splitMode && payment === "cash" && tendered !== "" && tend < total;
   // Split payment tallies
-  const splitSum = Math.round((["cash", "card", "mobile", "account"].reduce((s, k) => s + (Number(split[k]) || 0), 0)) * 100) / 100;
+  const splitSum = Math.round((["cash", "card", "mobile", "account", "loyalty"].reduce((s, k) => s + (Number(split[k]) || 0), 0)) * 100) / 100;
   const splitRemaining = Math.round((total - splitSum) * 100) / 100;
   const splitOk = splitMode && Math.abs(splitRemaining) < 0.01 && splitSum > 0;
   const accountPortion = splitMode ? (Number(split.account) || 0) : (payment === "account" ? total : 0);
+  // Loyalty redemption
+  const redeemValue = Number(settings?.loyalty_redeem_value || 0);
+  const loyaltyOn = redeemValue > 0 && custObj && Number(custObj.loyalty_points) > 0;
+  const pointsValue = custObj ? Number(custObj.loyalty_points) * redeemValue : 0;
   // On-account credit headroom check (mirrors the server rule)
   const overLimit = accountPortion > 0 && custObj && Number(custObj.credit_limit) > 0 &&
     Number(custObj.balance) + accountPortion > Number(custObj.credit_limit) + 1e-9;
@@ -183,7 +187,7 @@ export default function POS() {
     setErr("");
     try {
       const payments = splitMode
-        ? ["cash", "card", "mobile", "account"].filter((k) => Number(split[k]) > 0).map((k) => ({ method: k, amount: Number(split[k]) }))
+        ? ["cash", "card", "mobile", "account", "loyalty"].filter((k) => Number(split[k]) > 0).map((k) => ({ method: k, amount: Number(split[k]) }))
         : null;
       const res = await api("/api/sales", {
         method: "POST",
@@ -205,7 +209,7 @@ export default function POS() {
       clearCustomer();
       setTendered("");
       setSplitMode(false);
-      setSplit({ cash: "", card: "", mobile: "", account: "" });
+      setSplit({ cash: "", card: "", mobile: "", account: "", loyalty: "" });
       setPrescriber({ name: "", license: "" });
       load();
       searchRef.current?.focus();
@@ -438,11 +442,12 @@ export default function POS() {
             </>
           ) : (
             <div className="space-y-2 rounded-xl border border-sage-200 p-2.5 dark:border-sage-800">
-              {["cash", "card", "mobile", ...(custId && canAccount ? ["account"] : [])].map((m) => (
+              {["cash", "card", "mobile", ...(custId && canAccount ? ["account"] : []), ...(loyaltyOn ? ["loyalty"] : [])].map((m) => (
                 <div key={m} className="flex items-center gap-2">
                   <span className="w-16 text-xs capitalize text-sage-500">{m}</span>
                   <input type="number" min="0" step="0.01" className="input !py-1.5 text-right" placeholder="0.00"
                     value={split[m]} onChange={(e) => setSplit({ ...split, [m]: e.target.value })} />
+                  {m === "loyalty" && <button type="button" onClick={() => setSplit({ ...split, loyalty: String(Math.min(pointsValue, splitRemaining + (Number(split.loyalty) || 0)).toFixed(2)) })} className="shrink-0 text-[10px] text-brand-600" title={`${custObj.loyalty_points} pts ≈ ${money(pointsValue)}`}>use</button>}
                 </div>
               ))}
               <div className={`flex justify-between pt-1 text-xs font-medium ${Math.abs(splitRemaining) < 0.01 ? "text-brand-600" : "text-amber-600"}`}>
