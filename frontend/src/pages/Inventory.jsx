@@ -1040,6 +1040,7 @@ function StockCountModal({ products, onClose, onDone }) {
 // Barcode preview, generate (in-store EAN-13), and print price/barcode labels.
 function BarcodeModal({ product, settings, onClose, onChanged }) {
   const [code, setCode] = useState(product.barcode || "");
+  const [prefix, setPrefix] = useState(settings?.barcode_prefix || "");
   const [qty, setQty] = useState(1);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
@@ -1047,7 +1048,7 @@ function BarcodeModal({ product, settings, onClose, onChanged }) {
   const generate = async () => {
     setBusy(true); setErr("");
     try {
-      const { barcode } = await api("/api/barcode/generate", { method: "POST", body: { product_id: product.id, name: product.name } });
+      const { barcode } = await api("/api/barcode/generate", { method: "POST", body: { product_id: product.id, name: product.name, prefix } });
       setCode(barcode);
       onChanged && onChanged();
     } catch (e) { setErr(e.message); } finally { setBusy(false); }
@@ -1068,10 +1069,19 @@ function BarcodeModal({ product, settings, onClose, onChanged }) {
 
         {err && <div className="text-sm text-rose-600 dark:text-rose-400">{err}</div>}
 
-        <div className="flex items-end gap-2">
-          <Field label="Labels to print">
-            <input type="number" min="1" max="200" className="input !w-28" value={qty} onChange={(e) => setQty(e.target.value)} disabled={!code} />
+        <div className="grid grid-cols-2 gap-3">
+          <Field label="Prefix (blank = numeric)">
+            <input className="input" value={prefix} onChange={(e) => setPrefix(e.target.value)} placeholder="e.g. PAR, RMD or {name}" />
           </Field>
+          <Field label="Labels to print">
+            <input type="number" min="1" max="200" className="input" value={qty} onChange={(e) => setQty(e.target.value)} disabled={!code} />
+          </Field>
+        </div>
+        <p className="-mt-1 text-xs text-sage-400">
+          Letters need CODE128 (numeric stays EAN-13). <code>{"{name}"}</code> uses the product name → e.g. <b>{("PAR" )}…</b>. Then press Regenerate.
+        </p>
+
+        <div className="flex items-center gap-2">
           <div className="flex-1" />
           <button type="button" className="btn-outline" onClick={generate} disabled={busy}>
             {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />} {code ? "Regenerate" : "Generate"}
