@@ -24,7 +24,7 @@ exports.update = async (req, res) => {
     base_currency, pricing_mode,
     near_expiry_months, low_stock_default, loyalty_points_per_unit, loyalty_redeem_value,
     logo, theme, brand_color, theme_config,
-    receipt_paper, label_size, barcode_prefix,
+    receipt_paper, label_size, barcode_prefix, barcode_auto,
   } = req.body || {};
   if (pricing_mode && !["fixed", "market"].includes(pricing_mode))
     return res.status(400).json({ message: "Invalid pricing mode" });
@@ -54,6 +54,7 @@ exports.update = async (req, res) => {
          receipt_paper           = COALESCE($21, receipt_paper),
          label_size              = COALESCE($22, label_size),
          barcode_prefix          = CASE WHEN $23::text IS NULL THEN barcode_prefix ELSE $23::text END,
+         barcode_auto            = COALESCE($24, barcode_auto),
          updated_at              = NOW()
        WHERE id = 1 RETURNING *`,
       [
@@ -80,6 +81,7 @@ exports.update = async (req, res) => {
         receipt_paper || null,
         label_size || null,
         barcode_prefix === undefined ? null : barcode_prefix,
+        typeof barcode_auto === "boolean" ? barcode_auto : null,
       ]
     );
     logAudit(req, "settings_update", "settings", 1, { fields: Object.keys(req.body || {}) });

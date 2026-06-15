@@ -168,11 +168,16 @@ export default function Settings() {
                 <input className="input" value={f.barcode_prefix ?? ""} onChange={set("barcode_prefix")} disabled={!canEdit} placeholder="blank = EAN-13" />
               </Field>
             </div>
+            <label className="flex items-center gap-2.5 text-sm text-sage-700 dark:text-sage-300">
+              <input type="checkbox" checked={f.barcode_auto ?? true} onChange={(e) => setF({ ...f, barcode_auto: e.target.checked })} disabled={!canEdit}
+                className="h-4 w-4 rounded border-sage-300 text-brand-600 focus:ring-brand-500" />
+              Auto-generate a barcode for every new product
+            </label>
             <p className="text-xs text-sage-400">
               Batches expiring within the window are flagged on the dashboard, inventory and reports. New products start at the default reorder level.
             </p>
             <p className="text-xs text-sage-400">
-              <b>Barcode prefix:</b> leave blank for numeric EAN-13. Enter letters (e.g. <code>RMD</code>) for lettered CODE128 SKUs like <code>RMD00482</code>, or use <code>{"{name}"}</code> to start from the product name (Paracetamol → <code>PAR00482</code>).
+              <b>Barcode prefix:</b> leave blank for numeric EAN-13. Enter letters (e.g. <code>RMD</code>) for lettered CODE128 SKUs like <code>RMD00482</code>, or use <code>{"{name}"}</code> to start from the product name (Paracetamol → <code>PAR00482</code>). With auto-generate on, every new product gets one in this scheme — no typing.
             </p>
           </Section>
         )}

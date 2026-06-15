@@ -2,7 +2,7 @@ const pool = require("../config/db");
 const { pricingContext, effectivePrice } = require("../lib/pricing");
 const { effectiveBranch } = require("../lib/context");
 const { logAudit } = require("../lib/audit");
-const { uniqueEAN13, uniquePrefixed, cleanPrefix, deriveFromName } = require("../lib/barcode");
+const { mint } = require("../lib/barcode");
 
 const branchOf = effectiveBranch;
 
@@ -14,15 +14,11 @@ exports.generateBarcode = async (req, res) => {
   try {
     const pid = Number(req.body?.product_id);
     const settings = (await pool.query("SELECT barcode_prefix FROM settings WHERE id = 1")).rows[0] || {};
-    let raw = req.body?.prefix != null ? String(req.body.prefix) : (settings.barcode_prefix || "");
+    const raw = req.body?.prefix != null ? String(req.body.prefix) : (settings.barcode_prefix || "");
 
-    if (/\{name\}/i.test(raw)) {
-      let name = req.body?.name;
-      if (!name && pid) name = (await pool.query("SELECT name FROM products WHERE id = $1", [pid])).rows[0]?.name;
-      raw = raw.replace(/\{name\}/gi, deriveFromName(name));
-    }
-    const prefix = cleanPrefix(raw);
-    const code = prefix ? await uniquePrefixed(prefix) : await uniqueEAN13();
+    let name = req.body?.name;
+    if (!name && pid && /\{name\}/i.test(raw)) name = (await pool.query("SELECT name FROM products WHERE id = $1", [pid])).rows[0]?.name;
+    const code = await mint(raw, name);
 
     if (pid) {
       const { rowCount } = await pool.query("UPDATE products SET barcode = $1 WHERE id = $2", [code, pid]);
@@ -113,8 +109,8 @@ exports.importProducts = async (req, res) => {
   if (!rows || !rows.length) return res.status(400).json({ message: "No rows to import" });
   if (rows.length > 5000) return res.status(400).json({ message: "Too many rows (max 5000 per import)" });
   try {
-    const def = await pool.query("SELECT low_stock_default FROM settings WHERE id = 1");
-    const reorderDefault = Number(def.rows[0]?.low_stock_default || 10);
+    const def = (await pool.query("SELECT low_stock_default, barcode_prefix, barcode_auto FROM settings WHERE id = 1")).rows[0] || {};
+    const reorderDefault = Number(def.low_stock_default || 10);
     let created = 0, skipped = 0;
     const errors = [];
     for (let i = 0; i < rows.length; i++) {
@@ -128,11 +124,13 @@ exports.importProducts = async (req, res) => {
         const reorder = r.reorder_level != null && r.reorder_level !== "" ? Number(r.reorder_level) || reorderDefault : reorderDefault;
         const controlled = /^(1|true|yes|y)$/i.test(String(r.is_controlled || ""));
         const packSize = Math.max(1, Number(r.pack_size) || 1);
+        let bc = r.barcode || null;
+        if (!bc && def.barcode_auto) bc = await mint(def.barcode_prefix, name);
         await pool.query(
           `INSERT INTO products (name, generic_name, category, category_id, dosage_form, strength, unit, barcode, is_controlled, reorder_level, base_price, pack_size, pack_label)
            VALUES ($1,$2,$3,$4,$5,$6,COALESCE(NULLIF($7,''),'unit'),$8,$9,$10,$11,$12,$13)`,
           [name, r.generic_name || null, r.category || null, catId, r.dosage_form || null, r.strength || null,
-           r.unit || null, r.barcode || null, controlled, reorder,
+           r.unit || null, bc, controlled, reorder,
            r.base_price != null && r.base_price !== "" ? Number(r.base_price) : null,
            packSize, r.pack_label || null]
         );
@@ -161,16 +159,19 @@ exports.createProduct = async (req, res) => {
   if (!name) return res.status(400).json({ message: "Product name is required" });
   try {
     const cat = await resolveCategory(category_id, category);
-    const def = await pool.query("SELECT low_stock_default FROM settings WHERE id = 1");
+    const def = (await pool.query("SELECT low_stock_default, barcode_prefix, barcode_auto FROM settings WHERE id = 1")).rows[0] || {};
     const reorder = reorder_level != null && reorder_level !== ""
       ? Number(reorder_level)
-      : Number(def.rows[0]?.low_stock_default || 10);
+      : Number(def.low_stock_default || 10);
     const pack = Math.max(1, Number(pack_size) || 1);
+    // Auto-assign a barcode when none was supplied (using the configured scheme).
+    let bc = barcode || null;
+    if (!bc && def.barcode_auto) bc = await mint(def.barcode_prefix, name);
     const { rows } = await pool.query(
       `INSERT INTO products (name, generic_name, category, category_id, dosage_form, strength, unit, barcode, is_controlled, reorder_level, base_price, pack_size, pack_label, surveillance_tag)
        VALUES ($1,$2,$3,$4,$5,$6,COALESCE($7,'unit'),$8,COALESCE($9,false),$10,$11,$12,$13,$14) RETURNING *`,
       [name, generic_name || null, cat.name, cat.id, dosage_form || null, strength || null,
-       unit || null, barcode || null, is_controlled || false, reorder,
+       unit || null, bc, is_controlled || false, reorder,
        base_price !== "" && base_price != null ? Number(base_price) : null,
        pack, pack_label || null, surveillance_tag || null]
     );

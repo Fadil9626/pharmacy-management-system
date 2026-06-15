@@ -37,4 +37,13 @@ const deriveFromName = (name) => String(name || "").toUpperCase().replace(/[^A-Z
 const uniquePrefixed = (prefix) =>
   allocate(() => prefix + String(Math.floor(Math.random() * 1e5)).padStart(5, "0"));
 
-module.exports = { checkDigit, uniqueEAN13, uniquePrefixed, cleanPrefix, deriveFromName };
+// Mint a unique code for a scheme: blank prefix -> EAN-13; a prefix (with the
+// {name} token resolved from the product name) -> CODE128 SKU.
+async function mint(rawPrefix, name) {
+  let raw = rawPrefix || "";
+  if (/\{name\}/i.test(raw)) raw = raw.replace(/\{name\}/gi, deriveFromName(name));
+  const prefix = cleanPrefix(raw);
+  return prefix ? uniquePrefixed(prefix) : uniqueEAN13();
+}
+
+module.exports = { checkDigit, uniqueEAN13, uniquePrefixed, cleanPrefix, deriveFromName, mint };
