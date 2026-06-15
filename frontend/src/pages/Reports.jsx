@@ -3,7 +3,7 @@ import { api } from "../lib/api.js";
 import {
   TrendingUp, Wallet, Receipt, Percent, Loader2, CalendarClock,
   Boxes, Banknote, CreditCard, Smartphone, Trophy, AlertTriangle,
-  Download, Tag, UserRound, Clock, Undo2, GitBranch,
+  Download, Tag, UserRound, Clock, Undo2, GitBranch, Activity,
 } from "lucide-react";
 import { money, money0, num } from "../lib/money.js";
 import { downloadCSV } from "../lib/csv.js";
@@ -40,6 +40,8 @@ export default function Reports() {
   const [sales, setSales] = useState(null);
   const [inv, setInv] = useState(null);
   const [err, setErr] = useState("");
+  const [ph, setPh] = useState(null);
+  const [phPeriod, setPhPeriod] = useState("week");
 
   useEffect(() => {
     setSales(null);
@@ -48,6 +50,10 @@ export default function Reports() {
   useEffect(() => {
     api("/api/reports/inventory", { params: { days: 90 } }).then(setInv).catch(() => {});
   }, []);
+  useEffect(() => {
+    setPh(null);
+    api("/api/public-health/surveillance", { params: { from, to, period: phPeriod } }).then(setPh).catch(() => setPh({ rows: [], total_cases: 0 }));
+  }, [from, to, phPeriod]);
 
   const applyPreset = (p) => {
     setPreset(p.key);
@@ -303,6 +309,68 @@ export default function Reports() {
             </div>
           )}
         </div>
+      </div>
+
+      {/* Public-health surveillance — case signals from tagged dispensing */}
+      <div className="card p-6">
+        <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+          <div className="flex items-center gap-2">
+            <Activity className="h-5 w-5 text-rose-500" />
+            <h2 className="font-display text-lg font-semibold text-sage-900 dark:text-sage-50">Public-health surveillance</h2>
+          </div>
+          <div className="flex items-center gap-2">
+            {ph && ph.rows.length > 0 && (
+              <span className="text-sm text-sage-400">{num(ph.total_cases)} case signals</span>
+            )}
+            <div className="flex rounded-lg border border-sage-200 p-0.5 text-xs dark:border-sage-800">
+              {["week", "month"].map((p) => (
+                <button key={p} onClick={() => setPhPeriod(p)}
+                  className={"rounded-md px-2.5 py-1 font-medium capitalize transition " + (phPeriod === p ? "bg-brand-600 text-white" : "text-sage-500 dark:text-sage-400")}>
+                  {p}ly
+                </button>
+              ))}
+            </div>
+            {ph && ph.rows.length > 0 && (
+              <button onClick={() => downloadCSV(`surveillance_${phPeriod}_${from}_${to}`,
+                ph.rows.map((r) => ({ period: r.period, branch: r.branch, indicator: r.indicator, cases: r.cases, units: r.units })),
+                ["period", "branch", "indicator", "cases", "units"])}
+                className="btn-ghost !px-2 !py-1 text-xs text-sage-400 hover:text-brand-600" title="Export (DHIS2-style flat CSV)">
+                <Download className="h-3.5 w-3.5" /> CSV
+              </button>
+            )}
+          </div>
+        </div>
+        <p className="mb-4 text-sm text-sage-500 dark:text-sage-400">
+          Dispensing of products tagged with a surveillance indicator, aggregated into case signals by period and branch — exportable for Ministry-of-Health reporting.
+        </p>
+        {!ph ? <Empty label="…" /> : ph.rows.length === 0 ? (
+          <Empty label="No surveillance-tagged dispensing in this period. Tag products in Inventory to begin tracking." />
+        ) : (
+          <div className="max-h-96 overflow-y-auto">
+            <table className="w-full text-sm">
+              <thead className="sticky top-0 bg-white text-left text-xs uppercase tracking-wide text-sage-400 dark:bg-sage-950">
+                <tr>
+                  <th className="pb-2 font-medium">Period</th>
+                  <th className="pb-2 font-medium">Branch</th>
+                  <th className="pb-2 font-medium">Indicator</th>
+                  <th className="pb-2 text-right font-medium">Cases</th>
+                  <th className="pb-2 text-right font-medium">Units</th>
+                </tr>
+              </thead>
+              <tbody>
+                {ph.rows.map((r, i) => (
+                  <tr key={i} className="border-t border-sage-100 dark:border-sage-800/60">
+                    <td className="py-2 font-medium tabular-nums text-sage-700 dark:text-sage-200">{r.period}</td>
+                    <td className="py-2 text-sage-500 dark:text-sage-400">{r.branch}</td>
+                    <td className="py-2"><span className="chip bg-rose-100 text-rose-700 dark:bg-rose-900/40 dark:text-rose-300">{r.indicator}</span></td>
+                    <td className="py-2 text-right font-semibold text-sage-900 dark:text-sage-50">{num(r.cases)}</td>
+                    <td className="py-2 text-right text-sage-500 dark:text-sage-400">{num(r.units)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
       </div>
     </div>
   );

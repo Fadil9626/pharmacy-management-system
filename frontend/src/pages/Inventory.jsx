@@ -331,7 +331,10 @@ function ProductModal({ product, categories = [], onClose, onSaved }) {
     is_controlled: product?.is_controlled || false,
     base_price: product?.base_price ?? "",
     pack_size: product?.pack_size ?? 1, pack_label: product?.pack_label || "",
+    surveillance_tag: product?.surveillance_tag || "",
   });
+  const [shTags, setShTags] = useState([]);
+  useEffect(() => { api("/api/public-health/tags").then(setShTags).catch(() => {}); }, []);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
   const set = (k) => (e) =>
@@ -392,6 +395,13 @@ function ProductModal({ product, categories = [], onClose, onSaved }) {
         </div>
         <Field label="Barcode">
           <input className="input" value={f.barcode} onChange={set("barcode")} />
+        </Field>
+        <Field label="Surveillance indicator">
+          <select className="input" value={f.surveillance_tag} onChange={set("surveillance_tag")}>
+            <option value="">— None (not tracked) —</option>
+            {shTags.map((t) => <option key={t.key} value={t.key}>{t.label}</option>)}
+          </select>
+          <p className="mt-1 text-xs text-sage-400">Tag products whose dispensing signals a public-health case (for Ministry-of-Health reporting).</p>
         </Field>
         {marketOn && (
           <Field label={`Base price (${baseCur})`}>

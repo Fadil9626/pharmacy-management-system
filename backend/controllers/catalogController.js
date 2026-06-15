@@ -43,7 +43,7 @@ exports.listLite = async (req, res) => {
     const { rows } = await pool.query(
       `SELECT p.id, p.name, p.generic_name, p.category, p.category_id, p.dosage_form,
               p.strength, p.unit, p.barcode, p.is_controlled, p.reorder_level, p.base_price,
-              p.pack_size, p.pack_label,
+              p.pack_size, p.pack_label, p.surveillance_tag,
               COALESCE(s.qty, 0)::int   AS stock,
               COALESCE(s.cost, 0)::float  AS last_cost,
               COALESCE(s.price, 0)::float AS last_price
@@ -127,7 +127,7 @@ async function resolveCategory(category_id, categoryText) {
 }
 
 exports.createProduct = async (req, res) => {
-  const { name, generic_name, category, category_id, dosage_form, strength, unit, barcode, is_controlled, reorder_level, base_price, pack_size, pack_label } = req.body || {};
+  const { name, generic_name, category, category_id, dosage_form, strength, unit, barcode, is_controlled, reorder_level, base_price, pack_size, pack_label, surveillance_tag } = req.body || {};
   if (!name) return res.status(400).json({ message: "Product name is required" });
   try {
     const cat = await resolveCategory(category_id, category);
@@ -137,12 +137,12 @@ exports.createProduct = async (req, res) => {
       : Number(def.rows[0]?.low_stock_default || 10);
     const pack = Math.max(1, Number(pack_size) || 1);
     const { rows } = await pool.query(
-      `INSERT INTO products (name, generic_name, category, category_id, dosage_form, strength, unit, barcode, is_controlled, reorder_level, base_price, pack_size, pack_label)
-       VALUES ($1,$2,$3,$4,$5,$6,COALESCE($7,'unit'),$8,COALESCE($9,false),$10,$11,$12,$13) RETURNING *`,
+      `INSERT INTO products (name, generic_name, category, category_id, dosage_form, strength, unit, barcode, is_controlled, reorder_level, base_price, pack_size, pack_label, surveillance_tag)
+       VALUES ($1,$2,$3,$4,$5,$6,COALESCE($7,'unit'),$8,COALESCE($9,false),$10,$11,$12,$13,$14) RETURNING *`,
       [name, generic_name || null, cat.name, cat.id, dosage_form || null, strength || null,
        unit || null, barcode || null, is_controlled || false, reorder,
        base_price !== "" && base_price != null ? Number(base_price) : null,
-       pack, pack_label || null]
+       pack, pack_label || null, surveillance_tag || null]
     );
     res.status(201).json(rows[0]);
   } catch (e) {
@@ -152,7 +152,7 @@ exports.createProduct = async (req, res) => {
 
 exports.updateProduct = async (req, res) => {
   const id = Number(req.params.id);
-  const { name, generic_name, category, category_id, dosage_form, strength, unit, barcode, is_controlled, reorder_level, base_price, pack_size, pack_label } = req.body || {};
+  const { name, generic_name, category, category_id, dosage_form, strength, unit, barcode, is_controlled, reorder_level, base_price, pack_size, pack_label, surveillance_tag } = req.body || {};
   if (!name) return res.status(400).json({ message: "Product name is required" });
   try {
     const cat = await resolveCategory(category_id, category);
@@ -162,12 +162,12 @@ exports.updateProduct = async (req, res) => {
          name=$1, generic_name=$2, category=$3, category_id=$4, dosage_form=$5, strength=$6,
          unit=COALESCE($7,'unit'), barcode=$8, is_controlled=COALESCE($9,false),
          reorder_level=COALESCE($10,10), base_price=COALESCE($12, base_price),
-         pack_size=$13, pack_label=$14
+         pack_size=$13, pack_label=$14, surveillance_tag=$15
        WHERE id=$11 RETURNING *`,
       [name, generic_name || null, cat.name, cat.id, dosage_form || null, strength || null,
        unit || null, barcode || null, is_controlled || false, reorder_level || 10, id,
        base_price !== "" && base_price != null ? Number(base_price) : null,
-       pack, pack_label || null]
+       pack, pack_label || null, surveillance_tag || null]
     );
     if (!rows.length) return res.status(404).json({ message: "Product not found" });
     logAudit(req, "product_update", "product", id, { name: rows[0].name, base_price: rows[0].base_price, reorder_level: rows[0].reorder_level });

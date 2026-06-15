@@ -32,6 +32,7 @@ const transfers = require("./controllers/transfersController");
 const stockCounts = require("./controllers/stockCountController");
 const purchasing = require("./controllers/purchasingController");
 const reports = require("./controllers/reportsController");
+const publicHealth = require("./controllers/publicHealthController");
 
 const app = express();
 app.use(cors());
@@ -195,6 +196,10 @@ app.post("/api/purchase-orders/:id/pay", protect, requireModule("purchasing"), r
 // Reports
 app.get("/api/reports/sales", protect, requireModule("reports"), requirePermission("reports.view"), reports.sales);
 app.get("/api/reports/inventory", protect, requireModule("reports"), requirePermission("reports.view"), reports.inventory);
+
+// Public-health surveillance (case aggregates from tagged dispensing)
+app.get("/api/public-health/tags", protect, publicHealth.tags);
+app.get("/api/public-health/surveillance", protect, requireModule("reports"), requirePermission("reports.view"), publicHealth.surveillance);
 
 // ── Control Center remote management (admin-key auth) ───────
 app.get("/api/subscription/status", adminApiKey, subscription.status);
