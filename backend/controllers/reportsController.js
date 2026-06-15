@@ -56,11 +56,11 @@ exports.sales = async (req, res) => {
         [from, to, branchId]
       ),
       pool.query(
-        `SELECT payment_method, COUNT(*)::int AS txns,
-                COALESCE(SUM(total), 0)::float AS revenue
-         FROM sales
-         WHERE created_at::date BETWEEN $1 AND $2 AND ($3::int IS NULL OR branch_id = $3)
-         GROUP BY payment_method ORDER BY revenue DESC`,
+        `SELECT sp.method AS payment_method, COUNT(*)::int AS txns,
+                COALESCE(SUM(sp.amount), 0)::float AS revenue
+         FROM sale_payments sp JOIN sales s ON sp.sale_id = s.id
+         WHERE s.created_at::date BETWEEN $1 AND $2 AND ($3::int IS NULL OR s.branch_id = $3)
+         GROUP BY sp.method ORDER BY revenue DESC`,
         [from, to, branchId]
       ),
       pool.query(

@@ -1,4 +1,5 @@
 const pool = require("../config/db");
+const { logAudit } = require("../lib/audit");
 
 exports.get = async (_req, res) => {
   try {
@@ -67,6 +68,7 @@ exports.update = async (req, res) => {
         theme_config ? JSON.stringify(theme_config) : null,
       ]
     );
+    logAudit(req, "settings_update", "settings", 1, { fields: Object.keys(req.body || {}) });
     res.json(rows[0]);
   } catch (e) {
     res.status(500).json({ message: e.message });

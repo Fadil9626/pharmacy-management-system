@@ -1,5 +1,6 @@
 const pool = require("../config/db");
 const { PERMISSIONS, ROLES, ALL_KEYS, permsForRole, invalidate } = require("../lib/permissions");
+const { logAudit } = require("../lib/audit");
 
 // GET /api/permissions — catalogue + current matrix (owner = all).
 exports.list = async (_req, res) => {
@@ -30,6 +31,7 @@ exports.updateRole = async (req, res) => {
     }
     await client.query("COMMIT");
     invalidate();
+    logAudit(req, "permissions_update", "role", role, { count: valid.length });
     res.json({ success: true, role, permissions: valid });
   } catch (e) {
     await client.query("ROLLBACK").catch(() => {});

@@ -69,11 +69,12 @@ exports.summary = async (req, res) => {
            GROUP BY dd
          ) s ON s.dd = d::date
          ORDER BY day`, B),
-      // payment mix (30d)
+      // payment mix (30d) — from tender lines (handles split payments)
       pool.query(
-        `SELECT payment_method, COUNT(*)::int n, COALESCE(SUM(total),0)::float amount
-         FROM sales WHERE created_at >= CURRENT_DATE - INTERVAL '30 days' AND ($1::int IS NULL OR branch_id = $1)
-         GROUP BY payment_method ORDER BY amount DESC`, B),
+        `SELECT sp.method AS payment_method, COUNT(*)::int n, COALESCE(SUM(sp.amount),0)::float amount
+         FROM sale_payments sp JOIN sales s ON sp.sale_id = s.id
+         WHERE s.created_at >= CURRENT_DATE - INTERVAL '30 days' AND ($1::int IS NULL OR s.branch_id = $1)
+         GROUP BY sp.method ORDER BY amount DESC`, B),
       // top products (30d)
       pool.query(
         `SELECT COALESCE(si.name, p.name) AS name, SUM(si.qty)::int qty,

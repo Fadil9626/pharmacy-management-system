@@ -1,5 +1,6 @@
 const bcrypt = require("bcryptjs");
 const pool = require("../config/db");
+const { logAudit } = require("../lib/audit");
 
 const ROLES = ["owner", "manager", "pharmacist", "cashier"];
 
@@ -37,6 +38,7 @@ exports.create = async (req, res) => {
        RETURNING id, full_name, email, role, branch_id, is_active, created_at`,
       [full_name, email, hash, role || "cashier", branch]
     );
+    logAudit(req, "user_create", "user", rows[0].id, { name: full_name, role: rows[0].role });
     res.status(201).json(rows[0]);
   } catch (e) {
     if (e.code === "23505") return res.status(409).json({ message: "That email is already in use" });
@@ -65,6 +67,7 @@ exports.update = async (req, res) => {
        typeof is_active === "boolean" ? is_active : null, id]
     );
     if (!rows.length) return res.status(404).json({ message: "User not found" });
+    logAudit(req, "user_update", "user", id, { name: rows[0].full_name, role: rows[0].role, is_active: rows[0].is_active });
     res.json(rows[0]);
   } catch (e) {
     res.status(500).json({ message: e.message });
@@ -80,6 +83,7 @@ exports.resetPassword = async (req, res) => {
     const hash = await bcrypt.hash(password, 10);
     const { rowCount } = await pool.query("UPDATE users SET password_hash = $1 WHERE id = $2", [hash, id]);
     if (!rowCount) return res.status(404).json({ message: "User not found" });
+    logAudit(req, "user_password_reset", "user", id, null);
     res.json({ success: true });
   } catch (e) {
     res.status(500).json({ message: e.message });

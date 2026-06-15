@@ -3,7 +3,7 @@ import { api } from "../lib/api.js";
 import { useAuth } from "../context/AuthContext.jsx";
 import {
   Users, Plus, X, Loader2, KeyRound, ShieldCheck, UserCog, CheckCircle2, Ban,
-  Shield, Save, Lock,
+  Shield, Save, Lock, ScrollText, Search,
 } from "lucide-react";
 
 const ROLES = ["owner", "manager", "pharmacist", "cashier"];
@@ -44,7 +44,7 @@ export default function Staff() {
       </div>
 
       <div className="flex gap-1 rounded-xl border border-sage-200 bg-white p-1 dark:border-sage-800 dark:bg-sage-900 sm:inline-flex">
-        {[["people", "People", Users], ["permissions", "Roles & Permissions", Shield]].map(([key, label, Icon]) => (
+        {[["people", "People", Users], ["permissions", "Roles & Permissions", Shield], ["activity", "Activity", ScrollText]].map(([key, label, Icon]) => (
           <button key={key} onClick={() => setTab(key)}
             className={`flex flex-1 items-center justify-center gap-2 rounded-lg px-4 py-2 text-sm font-medium transition sm:flex-none ${
               tab === key ? "bg-brand-600 text-white shadow-soft" : "text-sage-500 hover:bg-sage-100 dark:text-sage-300 dark:hover:bg-sage-800"}`}>
@@ -56,6 +56,7 @@ export default function Staff() {
       {err && <div className="card border-rose-200 p-4 text-sm text-rose-600 dark:border-rose-900/50 dark:text-rose-300">{err}</div>}
 
       {tab === "permissions" && <PermissionsMatrix canEdit={user?.role === "owner"} />}
+      {tab === "activity" && <AuditLog />}
 
       {tab === "people" && (
       <div className="card overflow-hidden">
@@ -114,6 +115,90 @@ export default function Staff() {
       {showAdd && <AddModal onClose={() => setShowAdd(false)} onSaved={() => { setShowAdd(false); load(); }} canMintOwner={user?.role === "owner"} />}
       {editUser && <EditModal u={editUser} onClose={() => setEditUser(null)} onSaved={() => { setEditUser(null); load(); }} canMintOwner={user?.role === "owner"} />}
       {pwUser && <PasswordModal u={pwUser} onClose={() => setPwUser(null)} onSaved={() => setPwUser(null)} />}
+    </div>
+  );
+}
+
+const ACTION_LABEL = {
+  refund: "Refund", stock_adjust: "Stock adjust", product_update: "Product edit",
+  product_deactivate: "Product removed", settings_update: "Settings change",
+  permissions_update: "Permissions change", user_create: "Staff added",
+  user_update: "Staff edit", user_password_reset: "Password reset", po_cancel: "PO cancelled",
+};
+const ACTION_TONE = {
+  refund: "bg-rose-100 text-rose-700 dark:bg-rose-900/40 dark:text-rose-300",
+  stock_adjust: "bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300",
+  permissions_update: "bg-violet-100 text-violet-700 dark:bg-violet-900/40 dark:text-violet-300",
+  settings_update: "bg-sky-100 text-sky-700 dark:bg-sky-900/40 dark:text-sky-300",
+};
+
+function AuditLog() {
+  const [data, setData] = useState(null);
+  const [rows, setRows] = useState([]);
+  const [q, setQ] = useState("");
+  const [action, setAction] = useState("");
+  const [offset, setOffset] = useState(0);
+  const [more, setMore] = useState(false);
+  const [err, setErr] = useState("");
+
+  const fetchPage = (off, append) => {
+    api("/api/audit", { params: { limit: 50, offset: off, action, q } })
+      .then((d) => { setData(d); setRows(append ? (r) => [...r, ...d.rows] : d.rows); setMore(d.rows.length === 50); })
+      .catch((e) => setErr(e.message));
+  };
+  useEffect(() => { setOffset(0); fetchPage(0, false); }, [action]);
+
+  const search = (e) => { e.preventDefault(); setOffset(0); fetchPage(0, false); };
+
+  if (err) return <div className="card border-rose-200 p-4 text-sm text-rose-600 dark:border-rose-900/50 dark:text-rose-300">{err}</div>;
+  if (!data) return <div className="flex h-40 items-center justify-center text-sage-400"><Loader2 className="h-5 w-5 animate-spin" /></div>;
+
+  return (
+    <div className="space-y-4">
+      <div className="flex flex-wrap items-center gap-2">
+        <form onSubmit={search} className="relative flex-1">
+          <Search className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-sage-400" />
+          <input className="input pl-10" placeholder="Search by user or action…" value={q} onChange={(e) => setQ(e.target.value)} />
+        </form>
+        <select className="input !w-auto" value={action} onChange={(e) => setAction(e.target.value)}>
+          <option value="">All actions</option>
+          {data.actions.map((a) => <option key={a} value={a}>{ACTION_LABEL[a] || a}</option>)}
+        </select>
+      </div>
+
+      <div className="card overflow-hidden">
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b border-sage-200 text-left text-xs uppercase tracking-wide text-sage-400 dark:border-sage-800">
+                <th className="px-5 py-3 font-medium">When</th>
+                <th className="px-5 py-3 font-medium">Who</th>
+                <th className="px-5 py-3 font-medium">Action</th>
+                <th className="px-5 py-3 font-medium">Details</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.length === 0 ? (
+                <tr><td colSpan={4} className="px-5 py-10 text-center text-sage-400">No activity recorded yet.</td></tr>
+              ) : rows.map((r) => (
+                <tr key={r.id} className="border-b border-sage-100 last:border-0 dark:border-sage-800/60">
+                  <td className="px-5 py-3 whitespace-nowrap text-sage-500 dark:text-sage-400">{new Date(r.created_at).toLocaleString()}</td>
+                  <td className="px-5 py-3 font-medium text-sage-800 dark:text-sage-100">{r.user_name || "—"}</td>
+                  <td className="px-5 py-3"><span className={`chip ${ACTION_TONE[r.action] || "bg-sage-100 text-sage-600 dark:bg-sage-800 dark:text-sage-300"}`}>{ACTION_LABEL[r.action] || r.action}</span></td>
+                  <td className="px-5 py-3 text-xs text-sage-500 dark:text-sage-400">
+                    {r.entity}{r.entity_id ? ` #${r.entity_id}` : ""}{r.details ? " · " + Object.entries(r.details).map(([k, v]) => `${k}: ${v}`).join(", ") : ""}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+      {more && (
+        <div className="flex justify-center">
+          <button className="btn-outline" onClick={() => { const n = offset + 50; setOffset(n); fetchPage(n, true); }}>Load more</button>
+        </div>
+      )}
     </div>
   );
 }

@@ -1,6 +1,7 @@
 const pool = require("../config/db");
 const { pricingContext, effectivePrice } = require("../lib/pricing");
 const { effectiveBranch } = require("../lib/context");
+const { logAudit } = require("../lib/audit");
 
 const branchOf = effectiveBranch;
 
@@ -160,6 +161,7 @@ exports.updateProduct = async (req, res) => {
        base_price !== "" && base_price != null ? Number(base_price) : null]
     );
     if (!rows.length) return res.status(404).json({ message: "Product not found" });
+    logAudit(req, "product_update", "product", id, { name: rows[0].name, base_price: rows[0].base_price, reorder_level: rows[0].reorder_level });
     res.json(rows[0]);
   } catch (e) {
     res.status(500).json({ message: e.message });
@@ -169,10 +171,11 @@ exports.updateProduct = async (req, res) => {
 exports.deactivateProduct = async (req, res) => {
   try {
     const { rows } = await pool.query(
-      "UPDATE products SET is_active = false WHERE id = $1 RETURNING id",
+      "UPDATE products SET is_active = false WHERE id = $1 RETURNING id, name",
       [Number(req.params.id)]
     );
     if (!rows.length) return res.status(404).json({ message: "Product not found" });
+    logAudit(req, "product_deactivate", "product", rows[0].id, { name: rows[0].name });
     res.json({ success: true });
   } catch (e) {
     res.status(500).json({ message: e.message });
@@ -204,6 +207,7 @@ exports.adjustStock = async (req, res) => {
       [batch_id, batch.product_id, batch.branch_id, req.user.id, reason, change, note || null]
     );
     await client.query("COMMIT");
+    logAudit(req, "stock_adjust", "batch", batch_id, { product_id: batch.product_id, reason, qty_change: change, new_quantity: newQty, note: note || null });
     res.json({ success: true, batch_id, new_quantity: newQty });
   } catch (e) {
     await client.query("ROLLBACK").catch(() => {});

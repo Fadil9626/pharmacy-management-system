@@ -34,6 +34,8 @@ export default function POS() {
   const [custQuery, setCustQuery] = useState("");
   const [custResults, setCustResults] = useState([]);
   const [tendered, setTendered] = useState("");
+  const [splitMode, setSplitMode] = useState(false);
+  const [split, setSplit] = useState({ cash: "", card: "", mobile: "", account: "" });
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
   const [receipt, setReceipt] = useState(null);
@@ -131,11 +133,16 @@ export default function POS() {
   const tax = Math.round(taxable * (taxPct / 100) * 100) / 100;
   const total = taxable + tax;
   const tend = Number(tendered) || 0;
-  const change = payment === "cash" && tend > 0 ? Math.max(0, tend - total) : null;
-  const short = payment === "cash" && tendered !== "" && tend < total;
+  const change = !splitMode && payment === "cash" && tend > 0 ? Math.max(0, tend - total) : null;
+  const short = !splitMode && payment === "cash" && tendered !== "" && tend < total;
+  // Split payment tallies
+  const splitSum = Math.round((["cash", "card", "mobile", "account"].reduce((s, k) => s + (Number(split[k]) || 0), 0)) * 100) / 100;
+  const splitRemaining = Math.round((total - splitSum) * 100) / 100;
+  const splitOk = splitMode && Math.abs(splitRemaining) < 0.01 && splitSum > 0;
+  const accountPortion = splitMode ? (Number(split.account) || 0) : (payment === "account" ? total : 0);
   // On-account credit headroom check (mirrors the server rule)
-  const overLimit = payment === "account" && custObj && Number(custObj.credit_limit) > 0 &&
-    Number(custObj.balance) + total > Number(custObj.credit_limit) + 1e-9;
+  const overLimit = accountPortion > 0 && custObj && Number(custObj.credit_limit) > 0 &&
+    Number(custObj.balance) + accountPortion > Number(custObj.credit_limit) + 1e-9;
   // Controlled-drug compliance gate (mirrors the server rule)
   const hasControlled = controlledOn && cart.some((c) => c.is_controlled);
   const controlledBlocked = hasControlled && (!prescriber.license.trim() || !(custId || customer.trim()));
@@ -145,15 +152,19 @@ export default function POS() {
     setBusy(true);
     setErr("");
     try {
+      const payments = splitMode
+        ? ["cash", "card", "mobile", "account"].filter((k) => Number(split[k]) > 0).map((k) => ({ method: k, amount: Number(split[k]) }))
+        : null;
       const res = await api("/api/sales", {
         method: "POST",
         body: {
           items: cart.map((c) => ({ product_id: c.id, qty: c.qty })),
           discount: disc,
           payment_method: payment,
+          payments,
           customer_id: custId || null,
           customer_name: customer || null,
-          amount_paid: payment === "cash" && tendered !== "" ? tend : null,
+          amount_paid: !splitMode && payment === "cash" && tendered !== "" ? tend : null,
           prescriber_name: hasControlled ? prescriber.name || null : null,
           prescriber_license: hasControlled ? prescriber.license || null : null,
         },
@@ -163,6 +174,8 @@ export default function POS() {
       setDiscount("");
       clearCustomer();
       setTendered("");
+      setSplitMode(false);
+      setSplit({ cash: "", card: "", mobile: "", account: "" });
       setPrescriber({ name: "", license: "" });
       load();
       searchRef.current?.focus();
@@ -362,31 +375,45 @@ export default function POS() {
             onChange={(e) => setDiscount(e.target.value)}
           />
 
-          <div className={`grid gap-2 ${custId && canAccount ? "grid-cols-4" : "grid-cols-3"}`}>
-            {[...PAYMENTS, ...(custId && canAccount ? [{ key: "account", label: "Account", icon: HandCoins }] : [])].map((p) => (
-              <button
-                key={p.key}
-                onClick={() => setPayment(p.key)}
-                className={`flex flex-col items-center gap-1 rounded-xl border px-2 py-2 text-xs font-medium transition ${
-                  payment === p.key
-                    ? "border-brand-500 bg-brand-50 text-brand-700 dark:bg-brand-900/30 dark:text-brand-300"
-                    : "border-sage-200 text-sage-500 hover:bg-sage-50 dark:border-sage-700 dark:hover:bg-sage-800"
-                }`}
-              >
-                <p.icon className="h-4 w-4" /> {p.label}
-              </button>
-            ))}
+          <div className="flex items-center justify-between">
+            <span className="text-xs font-medium uppercase tracking-wide text-sage-400">Payment</span>
+            <button onClick={() => setSplitMode(!splitMode)}
+              className={`text-xs font-medium ${splitMode ? "text-brand-600" : "text-sage-400 hover:text-brand-600"}`}>
+              {splitMode ? "Single payment" : "Split payment"}
+            </button>
           </div>
 
-          {payment === "cash" && (
-            <input
-              type="number"
-              min="0"
-              className="input !py-2"
-              placeholder="Amount tendered"
-              value={tendered}
-              onChange={(e) => setTendered(e.target.value)}
-            />
+          {!splitMode ? (
+            <>
+              <div className={`grid gap-2 ${custId && canAccount ? "grid-cols-4" : "grid-cols-3"}`}>
+                {[...PAYMENTS, ...(custId && canAccount ? [{ key: "account", label: "Account", icon: HandCoins }] : [])].map((p) => (
+                  <button key={p.key} onClick={() => setPayment(p.key)}
+                    className={`flex flex-col items-center gap-1 rounded-xl border px-2 py-2 text-xs font-medium transition ${
+                      payment === p.key ? "border-brand-500 bg-brand-50 text-brand-700 dark:bg-brand-900/30 dark:text-brand-300"
+                        : "border-sage-200 text-sage-500 hover:bg-sage-50 dark:border-sage-700 dark:hover:bg-sage-800"}`}>
+                    <p.icon className="h-4 w-4" /> {p.label}
+                  </button>
+                ))}
+              </div>
+              {payment === "cash" && (
+                <input type="number" min="0" className="input !py-2" placeholder="Amount tendered"
+                  value={tendered} onChange={(e) => setTendered(e.target.value)} />
+              )}
+            </>
+          ) : (
+            <div className="space-y-2 rounded-xl border border-sage-200 p-2.5 dark:border-sage-800">
+              {["cash", "card", "mobile", ...(custId && canAccount ? ["account"] : [])].map((m) => (
+                <div key={m} className="flex items-center gap-2">
+                  <span className="w-16 text-xs capitalize text-sage-500">{m}</span>
+                  <input type="number" min="0" step="0.01" className="input !py-1.5 text-right" placeholder="0.00"
+                    value={split[m]} onChange={(e) => setSplit({ ...split, [m]: e.target.value })} />
+                </div>
+              ))}
+              <div className={`flex justify-between pt-1 text-xs font-medium ${Math.abs(splitRemaining) < 0.01 ? "text-brand-600" : "text-amber-600"}`}>
+                <span>{splitRemaining > 0 ? "Remaining" : splitRemaining < 0 ? "Over" : "Balanced"}</span>
+                <span>{money(Math.abs(splitRemaining))}</span>
+              </div>
+            </div>
           )}
 
           <div className="space-y-1 rounded-xl bg-sage-50 p-3 text-sm dark:bg-sage-950">
@@ -414,12 +441,13 @@ export default function POS() {
           </div>
 
           {short && <div className="text-sm text-amber-600 dark:text-amber-400">Amount tendered is less than the total.</div>}
+          {splitMode && !splitOk && cart.length > 0 && <div className="text-sm text-amber-600 dark:text-amber-400">Split must add up to {money(total)}.</div>}
           {overLimit && <div className="text-sm text-rose-600 dark:text-rose-400">This sale exceeds the customer's credit limit.</div>}
           {err && <div className="text-sm text-rose-600 dark:text-rose-400">{err}</div>}
 
-          <button onClick={checkout} disabled={busy || cart.length === 0 || short || overLimit || controlledBlocked} className="btn-primary w-full !py-3 text-base">
-            {busy ? <Loader2 className="h-5 w-5 animate-spin" /> : payment === "account" ? <HandCoins className="h-5 w-5" /> : <CheckCircle2 className="h-5 w-5" />}
-            {payment === "account" ? "Charge to account" : "Complete sale"} · {money(total)}
+          <button onClick={checkout} disabled={busy || cart.length === 0 || short || overLimit || controlledBlocked || (splitMode && !splitOk)} className="btn-primary w-full !py-3 text-base">
+            {busy ? <Loader2 className="h-5 w-5 animate-spin" /> : (!splitMode && payment === "account") ? <HandCoins className="h-5 w-5" /> : <CheckCircle2 className="h-5 w-5" />}
+            {(!splitMode && payment === "account") ? "Charge to account" : "Complete sale"} · {money(total)}
           </button>
         </div>
       </div>

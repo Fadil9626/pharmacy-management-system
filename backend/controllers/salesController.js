@@ -2,6 +2,7 @@ const pool = require("../config/db");
 const { pricingContext, effectivePrice } = require("../lib/pricing");
 const { effectiveBranch, moduleOn } = require("../lib/context");
 const { userCan } = require("../lib/permissions");
+const { logAudit } = require("../lib/audit");
 const { openShiftId } = require("./financeController");
 
 const branchOf = effectiveBranch;
@@ -122,33 +123,48 @@ exports.createSale = async (req, res) => {
     const disc = Math.max(0, Number(discount) || 0);
     if (disc > 0 && !(await userCan(req.user.role, "pos.discount")))
       throw new Error("You don't have permission to apply discounts");
-    if (payment_method === "account" && !(await userCan(req.user.role, "pos.account")))
-      throw new Error("You don't have permission to sell on account");
     const taxable = Math.max(0, subtotal - disc);
     const tax = Math.round(taxable * (taxPct / 100) * 100) / 100;
     const total = taxable + tax;
 
-    // Cash sales must be tendered in full when an amount is entered.
+    // Resolve the tender — either a split [{method, amount}] or a single method.
+    let payments = Array.isArray(req.body.payments) && req.body.payments.length
+      ? req.body.payments.map((p) => ({ method: String(p.method), amount: Math.round(Number(p.amount) * 100) / 100 })).filter((p) => p.method && p.amount > 0)
+      : null;
+    if (payments && payments.length) {
+      const sum = Math.round(payments.reduce((s, p) => s + p.amount, 0) * 100) / 100;
+      if (Math.abs(sum - total) > 0.01)
+        throw new Error(`Payments (${sum.toFixed(2)}) must add up to the total (${total.toFixed(2)})`);
+    } else {
+      payments = [{ method: payment_method, amount: total }];
+    }
+    const accountPortion = payments.filter((p) => p.method === "account").reduce((s, p) => s + p.amount, 0);
+    const effectiveMethod = payments.length > 1 ? "split" : payments[0].method;
+
+    if (accountPortion > 0 && !(await userCan(req.user.role, "pos.account")))
+      throw new Error("You don't have permission to sell on account");
+
+    // Cash tendered (for change) when paying with a single cash payment.
     const paidIn = amount_paid != null && amount_paid !== "" ? Number(amount_paid) : null;
-    if (payment_method === "cash" && paidIn != null && paidIn < total - 1e-9) {
+    if (effectiveMethod === "cash" && paidIn != null && paidIn < total - 1e-9) {
       throw new Error(`Amount tendered (${paidIn}) is less than the total (${total.toFixed(2)})`);
     }
 
-    // On-account (credit) sales: lock the customer, enforce the credit limit.
+    // Customer + on-account credit limit (only on the account portion).
     let custName = customer_name || null;
     if (customer_id) {
       const cust = await client.query("SELECT * FROM customers WHERE id = $1 FOR UPDATE", [customer_id]);
       if (!cust.rows.length) throw new Error("Customer not found");
       const c = cust.rows[0];
       custName = c.name;
-      if (payment_method === "account") {
-        const newBal = Number(c.balance) + total;
+      if (accountPortion > 0) {
+        const newBal = Number(c.balance) + accountPortion;
         if (Number(c.credit_limit) > 0 && newBal > Number(c.credit_limit) + 1e-9) {
           throw new Error(`Exceeds credit limit — owed ${newBal.toFixed(2)} of ${Number(c.credit_limit).toFixed(2)}`);
         }
       }
-    } else if (payment_method === "account") {
-      throw new Error("Account sales require a registered customer");
+    } else if (accountPortion > 0) {
+      throw new Error("Account payment requires a registered customer");
     }
 
     // Controlled-drug compliance: no scheduled item leaves the counter without
@@ -167,7 +183,7 @@ exports.createSale = async (req, res) => {
     const sale = await client.query(
       `INSERT INTO sales (branch_id, user_id, customer_id, customer_name, subtotal, discount, tax, total, payment_method, fx_rate, fx_base, pricing_mode, shift_id, prescriber_name, prescriber_license)
        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15) RETURNING id, created_at`,
-      [branchId, req.user.id, customer_id || null, custName, subtotal, disc, tax, total, payment_method, fxRate, fxBase, ctx.mode, shiftId, prescriber_name || null, prescriber_license || null]
+      [branchId, req.user.id, customer_id || null, custName, subtotal, disc, tax, total, effectiveMethod, fxRate, fxBase, ctx.mode, shiftId, prescriber_name || null, prescriber_license || null]
     );
     const saleId = sale.rows[0].id;
     const receiptNo = `R-${String(saleId).padStart(5, "0")}`;
@@ -180,12 +196,16 @@ exports.createSale = async (req, res) => {
         [saleId, l.product_id, l.batch_id, l.name, l.qty, l.unit_price, l.line_total]
       );
     }
+    // Record each tender line (source of truth for payment-mix reporting).
+    for (const p of payments) {
+      await client.query("INSERT INTO sale_payments (sale_id, method, amount) VALUES ($1,$2,$3)", [saleId, p.method, p.amount]);
+    }
 
-    // Accrue customer stats — on-account adds to balance; all linked sales build
-    // spend, visits and loyalty points.
+    // Accrue customer stats — the on-account portion adds to balance; all linked
+    // sales build spend, visits and loyalty points.
     if (customer_id) {
       const points = Math.floor(total * loyaltyRate);
-      const addBal = payment_method === "account" ? total : 0;
+      const addBal = accountPortion;
       await client.query(
         `UPDATE customers SET
            balance = balance + $1,
@@ -206,7 +226,8 @@ exports.createSale = async (req, res) => {
       discount: disc,
       tax,
       total,
-      payment_method,
+      payment_method: effectiveMethod,
+      payments,
       customer_name: custName,
       amount_paid: paidIn,
       change: paidIn != null ? Math.max(0, paidIn - total) : null,
@@ -358,6 +379,7 @@ exports.createReturn = async (req, res) => {
     }
 
     await client.query("COMMIT");
+    logAudit(req, "refund", "sale", saleId, { return: receiptNo, total, method: refund_method, items: retLines.length, restocked: !!restock });
     res.status(201).json({
       id: retId, receipt_no: receiptNo, sale_receipt: sale.receipt_no,
       subtotal, tax: propTax, total, refund_method, restocked: !!restock,

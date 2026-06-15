@@ -17,8 +17,9 @@ async function tally(shiftId) {
   const [shiftRes, byMethod, refunds, moves, exp] = await Promise.all([
     pool.query("SELECT * FROM shifts WHERE id = $1", [shiftId]),
     pool.query(
-      `SELECT payment_method, COUNT(*)::int AS n, COALESCE(SUM(total),0)::float AS amount
-       FROM sales WHERE shift_id = $1 GROUP BY payment_method`,
+      `SELECT sp.method AS payment_method, COUNT(*)::int AS n, COALESCE(SUM(sp.amount),0)::float AS amount
+       FROM sale_payments sp JOIN sales s ON sp.sale_id = s.id
+       WHERE s.shift_id = $1 GROUP BY sp.method`,
       [shiftId]
     ),
     pool.query(

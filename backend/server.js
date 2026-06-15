@@ -12,6 +12,7 @@ const requirePermission = require("./middleware/requirePermission");
 const adminApiKey = require("./middleware/adminApiKey");
 const { seedIfEmpty, backfillPermission } = require("./lib/permissions");
 const permissions = require("./controllers/permissionsController");
+const audit = require("./controllers/auditController");
 const auth = require("./controllers/authController");
 const modules = require("./controllers/modulesController");
 const catalog = require("./controllers/catalogController");
@@ -94,6 +95,9 @@ app.delete("/api/categories/:id", protect, requireModule("inventory"), requirePe
 // Settings (core admin)
 app.get("/api/settings", protect, settings.get);
 app.put("/api/settings", protect, requirePermission("settings.manage"), settings.update);
+
+// Audit log (owner/manager)
+app.get("/api/audit", protect, authorize("owner", "manager"), audit.list);
 
 // Roles & permissions (owner only)
 app.get("/api/permissions", protect, authorize("owner", "manager"), permissions.list);
