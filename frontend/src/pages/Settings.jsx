@@ -68,31 +68,35 @@ export default function Settings() {
   if (!f) return <div className="flex h-40 items-center justify-center text-sage-400"><Loader2 className="h-5 w-5 animate-spin" /></div>;
 
   return (
-    <div className="mx-auto max-w-4xl space-y-6">
+    <div className="mx-auto max-w-5xl space-y-6">
       <div>
         <h1 className="font-display text-2xl font-semibold text-sage-900 dark:text-sage-50">Settings</h1>
         <p className="mt-1 text-sm text-sage-500 dark:text-sage-400">Configure and customise how Remedy runs your pharmacy.</p>
       </div>
 
-      {/* Tabs */}
-      <div className="flex flex-wrap gap-1 rounded-xl border border-sage-200 bg-white p-1 dark:border-sage-800 dark:bg-sage-900">
-        {TABS.map((t) => (
-          <button key={t.key} onClick={() => setTab(t.key)}
-            className={`flex items-center gap-2 rounded-lg px-3.5 py-2 text-sm font-medium transition ${
-              tab === t.key ? "bg-brand-600 text-white shadow-soft"
-                : "text-sage-500 hover:bg-sage-100 dark:text-sage-300 dark:hover:bg-sage-800"}`}>
-            <t.icon className="h-4 w-4" /> {t.label}
-          </button>
-        ))}
-      </div>
+      <div className="grid gap-6 lg:grid-cols-[210px_minmax(0,1fr)]">
+        {/* Section nav */}
+        <nav className="flex gap-1 overflow-x-auto pb-1 lg:sticky lg:top-20 lg:flex-col lg:gap-0.5 lg:self-start lg:overflow-visible lg:pb-0">
+          {TABS.map((t) => (
+            <button key={t.key} type="button" onClick={() => setTab(t.key)}
+              className={`flex items-center gap-2.5 whitespace-nowrap rounded-lg px-3 py-2 text-sm font-medium transition ${
+                tab === t.key
+                  ? "bg-brand-50 text-brand-700 dark:bg-brand-900/30 dark:text-brand-200"
+                  : "text-sage-600 hover:bg-sage-100 dark:text-sage-300 dark:hover:bg-sage-800"}`}>
+              <t.icon className="h-4 w-4 shrink-0" /> {t.label}
+            </button>
+          ))}
+        </nav>
 
-      {!canEdit && tab !== "modules" && (
-        <div className="card flex items-center gap-2 p-3 text-sm text-sage-500 dark:text-sage-400">
-          <Lock className="h-4 w-4" /> Only owners and managers can change settings.
-        </div>
-      )}
+        {/* Panel */}
+        <div className="min-w-0 space-y-5">
+          {!canEdit && tab !== "modules" && (
+            <div className="card flex items-center gap-2 p-3 text-sm text-sage-500 dark:text-sage-400">
+              <Lock className="h-4 w-4" /> Only owners and managers can change settings.
+            </div>
+          )}
 
-      <form onSubmit={save} className="space-y-5">
+          <form onSubmit={save} className="space-y-5">
         {tab === "business" && (
           <Section icon={Store} title="Business profile" hint="Shown on receipts, the sidebar and reports.">
             <LogoUpload value={f.logo} name={f.pharmacy_name} disabled={!canEdit}
@@ -227,7 +231,9 @@ export default function Settings() {
             {saved && <span className="flex items-center gap-1 text-sm font-medium text-brand-600 dark:text-brand-400"><CheckCircle2 className="h-4 w-4" /> Saved</span>}
           </div>
         )}
-      </form>
+          </form>
+        </div>
+      </div>
     </div>
   );
 }
