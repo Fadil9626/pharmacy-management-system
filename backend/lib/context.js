@@ -3,12 +3,17 @@ const pool = require("../config/db");
 // The branch a request should act on. The frontend sends X-Branch-Id (the
 // oversight "branch lens"); writes use it so stock never lands in a sister
 // branch by accident. Falls back to explicit params, then the user's home branch.
-const effectiveBranch = (req) =>
-  Number(req.headers["x-branch-id"]) ||
-  Number(req.query.branch_id) ||
-  Number(req.body && req.body.branch_id) ||
-  (req.user && req.user.branch_id) ||
-  null;
+const effectiveBranch = (req) => {
+  // "all" = explicit cross-branch (owner oversight) → no branch filter.
+  if (req.headers["x-branch-id"] === "all" || req.query.branch_id === "all") return null;
+  return (
+    Number(req.headers["x-branch-id"]) ||
+    Number(req.query.branch_id) ||
+    Number(req.body && req.body.branch_id) ||
+    (req.user && req.user.branch_id) ||
+    null
+  );
+};
 
 // Is a licensable module switched on? (Pass a pg client to read in a txn.)
 async function moduleOn(key, db = pool) {

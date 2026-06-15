@@ -1,6 +1,7 @@
 const pool = require("../config/db");
 
-const branchOf = (req) => Number(req.query.branch_id) || req.user.branch_id || null;
+const { effectiveBranch } = require("../lib/context");
+const branchOf = effectiveBranch;
 
 // Controlled (scheduled) products with current stock.
 exports.products = async (req, res) => {

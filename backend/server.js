@@ -28,6 +28,7 @@ const prescriptions = require("./controllers/prescriptionsController");
 const controlled = require("./controllers/controlledController");
 const finance = require("./controllers/financeController");
 const branches = require("./controllers/branchesController");
+const transfers = require("./controllers/transfersController");
 const purchasing = require("./controllers/purchasingController");
 const reports = require("./controllers/reportsController");
 
@@ -121,6 +122,8 @@ app.post("/api/prescriptions/:id/cancel", protect, requireModule("prescriptions"
 app.get("/api/branches", protect, requireModule("branches"), branches.list);
 app.post("/api/branches", protect, requireModule("branches"), requirePermission("branches.manage"), branches.create);
 app.patch("/api/branches/:id", protect, requireModule("branches"), requirePermission("branches.manage"), branches.update);
+app.get("/api/transfers", protect, requireModule("branches"), transfers.list);
+app.post("/api/transfers", protect, requireModule("branches"), requirePermission("inventory.adjust"), transfers.create);
 
 // Finance — till shifts, cash movements, expenses (licensable module)
 app.get("/api/finance/shift/current", protect, requireModule("finance"), finance.current);

@@ -48,6 +48,7 @@ function BranchSwitcher() {
         className="cursor-pointer bg-white text-sm font-medium text-sage-800 focus:outline-none dark:bg-sage-900 dark:text-sage-100 [color-scheme:light] dark:[color-scheme:dark]"
       >
         <option value="" className="bg-white text-sage-800 dark:bg-sage-900 dark:text-sage-100">My branch</option>
+        <option value="all" className="bg-white text-sage-800 dark:bg-sage-900 dark:text-sage-100">All branches</option>
         {branches.map((b) => (
           <option key={b.id} value={b.id} className="bg-white text-sage-800 dark:bg-sage-900 dark:text-sage-100">{b.name}</option>
         ))}

@@ -3,7 +3,7 @@ import { api } from "../lib/api.js";
 import {
   TrendingUp, Wallet, Receipt, Percent, Loader2, CalendarClock,
   Boxes, Banknote, CreditCard, Smartphone, Trophy, AlertTriangle,
-  Download, Tag, UserRound, Clock, Undo2,
+  Download, Tag, UserRound, Clock, Undo2, GitBranch,
 } from "lucide-react";
 import { money, money0, num } from "../lib/money.js";
 import { downloadCSV } from "../lib/csv.js";
@@ -236,6 +236,12 @@ export default function Reports() {
               <h2 className="font-display text-lg font-semibold text-sage-900 dark:text-sage-50">Busiest hours</h2></div>
             <HourChart rows={sales.by_hour} />
           </div>
+
+          {/* Branch comparison (all-branches view) */}
+          {sales.by_branch && sales.by_branch.length > 1 && (
+            <BreakdownBars title="Sales by branch" icon={GitBranch} rows={sales.by_branch.map((b) => ({ ...b, qty: b.txns }))}
+              labelKey="branch" exportName={`by-branch_${from}_${to}`} />
+          )}
         </>
       )}
 

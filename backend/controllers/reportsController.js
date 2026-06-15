@@ -1,6 +1,7 @@
 const pool = require("../config/db");
 
-const branchOf = (req) => Number(req.query.branch_id) || req.user.branch_id || null;
+const { effectiveBranch } = require("../lib/context");
+const branchOf = effectiveBranch;
 
 const iso = (d) => d.toISOString().slice(0, 10);
 const range = (req) => {
@@ -19,7 +20,7 @@ exports.sales = async (req, res) => {
   const branchId = branchOf(req);
   const { from, to } = range(req);
   try {
-    const [summary, refunds, cogs, byDay, byPayment, top, byCategory, byStaff, byHour] = await Promise.all([
+    const [summary, refunds, cogs, byDay, byPayment, top, byCategory, byStaff, byHour, byBranch] = await Promise.all([
       pool.query(
         `SELECT COUNT(*)::int AS txns,
                 COALESCE(SUM(total), 0)::float    AS revenue,
@@ -104,6 +105,15 @@ exports.sales = async (req, res) => {
          GROUP BY hour ORDER BY hour`,
         [from, to, branchId]
       ),
+      // by branch (for the all-branches view)
+      pool.query(
+        `SELECT COALESCE(b.name,'—') AS branch, COUNT(*)::int AS txns,
+                COALESCE(SUM(s.total),0)::float AS revenue
+         FROM sales s LEFT JOIN branches b ON s.branch_id = b.id
+         WHERE s.created_at::date BETWEEN $1 AND $2 AND ($3::int IS NULL OR s.branch_id = $3)
+         GROUP BY COALESCE(b.name,'—') ORDER BY revenue DESC`,
+        [from, to, branchId]
+      ),
     ]);
 
     const s = summary.rows[0];
@@ -133,6 +143,7 @@ exports.sales = async (req, res) => {
       by_category: byCategory.rows,
       by_staff: byStaff.rows,
       by_hour: byHour.rows,
+      by_branch: byBranch.rows,
     });
   } catch (e) {
     res.status(500).json({ message: e.message });
