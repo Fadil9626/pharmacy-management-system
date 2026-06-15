@@ -103,10 +103,16 @@ export default function Layout() {
   const renderSidebar = (collapsed) => (
     <div className="flex h-full flex-col">
       <div className={`flex h-16 items-center px-3 ${collapsed ? "justify-center" : "justify-between"}`}>
-        <Brand name={settings?.pharmacy_name} logo={settings?.logo} collapsed={collapsed} />
-        <button className="btn-ghost !px-2 !py-2 lg:hidden" onClick={() => setOpen(false)}>
-          <X className="h-5 w-5" />
-        </button>
+        {!collapsed && <Brand name={settings?.pharmacy_name} logo={settings?.logo} collapsed={false} />}
+        <div className="flex items-center">
+          <button onClick={toggleCollapsed} title={collapsed ? "Expand sidebar" : "Collapse sidebar"}
+            aria-label="Toggle sidebar" className="nav-item hidden !px-2 lg:flex">
+            <PanelLeft className="h-[18px] w-[18px]" />
+          </button>
+          <button className="btn-ghost !px-2 !py-2 lg:hidden" onClick={() => setOpen(false)}>
+            <X className="h-5 w-5" />
+          </button>
+        </div>
       </div>
       <nav className="flex-1 space-y-1 overflow-y-auto px-3 py-2">
         {items.map((n) => (
@@ -133,11 +139,7 @@ export default function Layout() {
           </Fragment>
         ))}
       </nav>
-      <div className="space-y-1 border-t p-3 sidebar-divider">
-        <button onClick={toggleCollapsed} title={collapsed ? "Expand sidebar" : "Collapse sidebar"}
-          className={`nav-item hidden w-full lg:flex ${collapsed ? "justify-center !px-2" : "justify-start"}`}>
-          <PanelLeft className="h-[18px] w-[18px]" /> {!collapsed && "Collapse"}
-        </button>
+      <div className="border-t p-3 sidebar-divider">
         <button onClick={doLogout} title={collapsed ? "Sign out" : undefined}
           className={`nav-item w-full ${collapsed ? "justify-center !px-2" : "justify-start"}`}>
           <LogOut className="h-[18px] w-[18px]" /> {!collapsed && "Sign out"}
