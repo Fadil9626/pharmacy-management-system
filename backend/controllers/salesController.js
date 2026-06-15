@@ -48,10 +48,24 @@ exports.sellableProducts = async (req, res) => {
 exports.createSale = async (req, res) => {
   const branchId = effectiveBranch(req);
   const { items, discount = 0, payment_method = "cash", customer_name, customer_id,
-          amount_paid, prescriber_name, prescriber_license } = req.body || {};
+          amount_paid, prescriber_name, prescriber_license, client_uuid } = req.body || {};
   if (!branchId) return res.status(400).json({ message: "No branch on this account" });
   if (!Array.isArray(items) || items.length === 0)
     return res.status(400).json({ message: "Cart is empty" });
+
+  // Idempotency: a queued offline sale replays with its client UUID. If we've
+  // already processed it, return the stored sale instead of charging again.
+  if (client_uuid) {
+    const prior = await pool.query(
+      `SELECT id, receipt_no, subtotal, discount, tax, total, payment_method, customer_name, created_at
+       FROM sales WHERE client_uuid = $1`, [client_uuid]
+    );
+    if (prior.rows.length) {
+      const s = prior.rows[0];
+      const li = await pool.query("SELECT product_id, name, qty, unit_price, line_total FROM sale_items WHERE sale_id = $1", [s.id]);
+      return res.status(200).json({ ...s, items: li.rows, change: null, amount_paid: null, duplicate: true });
+    }
+  }
 
   // Open-till discipline: when Finance is licensed, a cashier must open their
   // till (with a cash float) before any sale can be rung up.
@@ -191,9 +205,9 @@ exports.createSale = async (req, res) => {
     const fxBase = ctx.marketActive ? ctx.base : null;
     const shiftId = await openShiftId(req.user.id, client); // tag to the cashier's open till
     const sale = await client.query(
-      `INSERT INTO sales (branch_id, user_id, customer_id, customer_name, subtotal, discount, tax, total, payment_method, fx_rate, fx_base, pricing_mode, shift_id, prescriber_name, prescriber_license)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15) RETURNING id, created_at`,
-      [branchId, req.user.id, customer_id || null, custName, subtotal, disc, tax, total, effectiveMethod, fxRate, fxBase, ctx.mode, shiftId, prescriber_name || null, prescriber_license || null]
+      `INSERT INTO sales (branch_id, user_id, customer_id, customer_name, subtotal, discount, tax, total, payment_method, fx_rate, fx_base, pricing_mode, shift_id, prescriber_name, prescriber_license, client_uuid)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16) RETURNING id, created_at`,
+      [branchId, req.user.id, customer_id || null, custName, subtotal, disc, tax, total, effectiveMethod, fxRate, fxBase, ctx.mode, shiftId, prescriber_name || null, prescriber_license || null, client_uuid || null]
     );
     const saleId = sale.rows[0].id;
     const receiptNo = `R-${String(saleId).padStart(5, "0")}`;

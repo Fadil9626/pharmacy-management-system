@@ -31,6 +31,11 @@ export default function ReceiptModal({ receipt, cashier, branch, settings, onClo
           <button onClick={onClose} className="btn-ghost !px-2 !py-2"><X className="h-5 w-5" /></button>
         </div>
 
+        {receipt.offline && (
+          <div className="mx-5 mt-4 rounded-lg bg-amber-50 px-3 py-2 text-center text-xs font-medium text-amber-700 dark:bg-amber-900/20 dark:text-amber-300">
+            Saved offline — will sync and get its receipt number when you reconnect.
+          </div>
+        )}
         <div id="receipt" className="px-6 py-5 text-sm">
           <div className="text-center">
             {settings?.logo && <img src={settings.logo} alt="" className="mx-auto mb-2 h-12 w-12 object-contain" />}

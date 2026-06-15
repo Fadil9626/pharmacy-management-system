@@ -3,11 +3,17 @@ import { api } from "../lib/api.js";
 import { useAuth } from "../context/AuthContext.jsx";
 import { money } from "../lib/money.js";
 import ReceiptModal from "../components/Receipt.jsx";
+import { cacheCatalogue, loadCachedCatalogue, queueSale, queueCount } from "../lib/offlineDB.js";
+import { syncQueue } from "../lib/offlineSync.js";
 import {
   Search, Plus, Minus, Trash2, ShoppingCart, Loader2, CheckCircle2, X,
   ShieldAlert, Banknote, CreditCard, Smartphone, ScanLine, HandCoins, Wallet, Lock,
-  PauseCircle, Clock3, PlayCircle,
+  PauseCircle, Clock3, PlayCircle, Wifi, WifiOff, RefreshCw, CloudOff,
 } from "lucide-react";
+
+const uuid = () =>
+  (crypto.randomUUID && crypto.randomUUID()) ||
+  `${Date.now()}-${Math.random().toString(16).slice(2)}`;
 
 const PAYMENTS = [
   { key: "cash", label: "Cash", icon: Banknote },
@@ -43,6 +49,11 @@ export default function POS() {
   const [showParked, setShowParked] = useState(false);
   const [showHold, setShowHold] = useState(false);
   const [parkedCount, setParkedCount] = useState(0);
+  const [online, setOnline] = useState(typeof navigator === "undefined" ? true : navigator.onLine);
+  const [fromCache, setFromCache] = useState(false); // catalogue served from offline cache
+  const [pending, setPending] = useState(0);         // queued offline sales
+  const [syncing, setSyncing] = useState(false);
+  const [syncMsg, setSyncMsg] = useState("");
   const searchRef = useRef(null);
 
   const loadParked = () => api("/api/pos/parked").then((r) => setParkedCount(r.length)).catch(() => {});
@@ -91,17 +102,65 @@ export default function POS() {
     if (payment === "account") setPayment("cash");
   };
 
-  const load = () => api("/api/pos/products").then(setProducts).catch((e) => setErr(e.message));
+  const load = () =>
+    api("/api/pos/products")
+      .then((p) => { setProducts(p); setFromCache(false); cacheCatalogue(p); })
+      .catch(async (e) => {
+        // Offline (or server unreachable): fall back to the last cached catalogue
+        // so the till can keep selling.
+        const cached = await loadCachedCatalogue();
+        if (cached) { setProducts(cached); setFromCache(true); }
+        else setErr(e.message);
+      });
   const checkShift = () => {
     if (!financeOn) { setShift(null); return; }
     api("/api/finance/shift/current").then((r) => setShift(r.shift || null)).catch(() => setShift(null));
   };
+
+  const refreshPending = () => queueCount().then(setPending);
+
+  const sync = async (silent = false) => {
+    if (syncing) return;
+    const n = await queueCount();
+    if (!n) { if (!silent) setSyncMsg("Nothing to sync."); return; }
+    setSyncing(true); setSyncMsg("");
+    try {
+      const r = await syncQueue(api);
+      await refreshPending();
+      if (r.synced || r.failed.length) load(); // refresh stock after server processed
+      const parts = [];
+      if (r.synced) parts.push(`${r.synced} synced`);
+      if (r.failed.length) parts.push(`${r.failed.length} rejected (review Sales)`);
+      if (r.remaining) parts.push(`${r.remaining} still queued`);
+      setSyncMsg(parts.join(" · ") || "Synced.");
+    } catch (e) {
+      setSyncMsg("Couldn't reach the server — still offline.");
+    } finally {
+      setSyncing(false);
+      setTimeout(() => setSyncMsg(""), 5000);
+    }
+  };
+
   useEffect(() => {
     load();
     checkShift();
     loadParked();
+    refreshPending();
     searchRef.current?.focus();
   }, []);
+
+  // Track connectivity; auto-sync the offline queue when we come back online.
+  useEffect(() => {
+    const goOnline = () => { setOnline(true); load(); checkShift(); sync(true); };
+    const goOffline = () => setOnline(false);
+    window.addEventListener("online", goOnline);
+    window.addEventListener("offline", goOffline);
+    if (navigator.onLine) sync(true); // flush anything left from a previous session
+    return () => {
+      window.removeEventListener("online", goOnline);
+      window.removeEventListener("offline", goOffline);
+    };
+  }, []); // eslint-disable-line
 
   const filtered = useMemo(() => {
     if (!products) return [];
@@ -179,39 +238,71 @@ export default function POS() {
   const hasControlled = controlledOn && cart.some((c) => c.is_controlled);
   const controlledBlocked = hasControlled && (!prescriber.license.trim() || !(custId || customer.trim()));
 
+  const resetSale = () => {
+    setCart([]);
+    setDiscount("");
+    clearCustomer();
+    setTendered("");
+    setSplitMode(false);
+    setSplit({ cash: "", card: "", mobile: "", account: "", loyalty: "" });
+    setPrescriber({ name: "", license: "" });
+    searchRef.current?.focus();
+  };
+
+  // Build a local receipt for an offline sale (server assigns the real one later).
+  const provisionalReceipt = (payload) => ({
+    receipt_no: "OFFLINE",
+    created_at: Date.now(),
+    items: cart.map((c) => ({ name: c.name, qty: c.qty, line_total: c.qty * c.price })),
+    subtotal, discount: disc, tax, total,
+    payment_method: splitMode ? "split" : payment,
+    amount_paid: payload.amount_paid,
+    change: payload.amount_paid != null ? Math.max(0, payload.amount_paid - total) : null,
+    customer_name: customer || (custObj && custObj.name) || null,
+    offline: true,
+  });
+
   const checkout = async () => {
     if (cart.length === 0) return;
     setBusy(true);
     setErr("");
+    const payments = splitMode
+      ? ["cash", "card", "mobile", "account", "loyalty"].filter((k) => Number(split[k]) > 0).map((k) => ({ method: k, amount: Number(split[k]) }))
+      : null;
+    const payload = {
+      client_uuid: uuid(),
+      items: cart.map((c) => ({ product_id: c.id, qty: c.qty })),
+      discount: disc,
+      payment_method: payment,
+      payments,
+      customer_id: custId || null,
+      customer_name: customer || null,
+      amount_paid: !splitMode && payment === "cash" && tendered !== "" ? tend : null,
+      prescriber_name: hasControlled ? prescriber.name || null : null,
+      prescriber_license: hasControlled ? prescriber.license || null : null,
+    };
+
+    // Offline sale: queue it, decrement cached stock, hand over a provisional receipt.
+    const goOffline = async (label) => {
+      await queueSale({ uuid: payload.client_uuid, payload, label, at: Date.now() });
+      setProducts((prev) => prev && prev.map((p) => {
+        const line = cart.find((c) => c.id === p.id);
+        return line ? { ...p, stock: Math.max(0, p.stock - line.qty) } : p;
+      }));
+      await refreshPending();
+      setReceipt(provisionalReceipt(payload));
+      resetSale();
+    };
+
     try {
-      const payments = splitMode
-        ? ["cash", "card", "mobile", "account", "loyalty"].filter((k) => Number(split[k]) > 0).map((k) => ({ method: k, amount: Number(split[k]) }))
-        : null;
-      const res = await api("/api/sales", {
-        method: "POST",
-        body: {
-          items: cart.map((c) => ({ product_id: c.id, qty: c.qty })),
-          discount: disc,
-          payment_method: payment,
-          payments,
-          customer_id: custId || null,
-          customer_name: customer || null,
-          amount_paid: !splitMode && payment === "cash" && tendered !== "" ? tend : null,
-          prescriber_name: hasControlled ? prescriber.name || null : null,
-          prescriber_license: hasControlled ? prescriber.license || null : null,
-        },
-      });
+      if (!navigator.onLine) { await goOffline(customer || custObj?.name || "Walk-in"); return; }
+      const res = await api("/api/sales", { method: "POST", body: payload });
       setReceipt(res);
-      setCart([]);
-      setDiscount("");
-      clearCustomer();
-      setTendered("");
-      setSplitMode(false);
-      setSplit({ cash: "", card: "", mobile: "", account: "", loyalty: "" });
-      setPrescriber({ name: "", license: "" });
+      resetSale();
       load();
-      searchRef.current?.focus();
     } catch (e) {
+      // A network error (server has no status) → fall back to the offline queue.
+      if (e.status == null) { await goOffline(customer || custObj?.name || "Walk-in"); return; }
       if (e.data?.code === "NO_SHIFT") setShift(null); // surface the open-till gate
       setErr(e.message);
     } finally {
@@ -220,7 +311,9 @@ export default function POS() {
   };
 
   // Open-till gate: when Finance is licensed, the cashier must open a till first.
-  if (financeOn && shift === null) {
+  // Skipped while offline (we can't verify the shift) — offline sales reconcile
+  // against the server's open till at sync time.
+  if (financeOn && shift === null && online) {
     return <OpenTill onOpened={(s) => setShift(s)} cashier={user?.full_name} />;
   }
 
@@ -228,6 +321,26 @@ export default function POS() {
     <div className="grid h-[calc(100vh-7rem)] grid-cols-1 gap-5 lg:grid-cols-[1fr_400px]">
       {/* Catalogue */}
       <div className="flex min-h-0 flex-col">
+        {(!online || fromCache || pending > 0 || syncMsg) && (
+          <div className={`mb-3 flex flex-wrap items-center gap-2 rounded-xl border px-3 py-2 text-sm ${
+            online ? "border-sage-200 bg-white dark:border-sage-800 dark:bg-sage-900"
+                   : "border-amber-300 bg-amber-50 dark:border-amber-900/50 dark:bg-amber-900/20"}`}>
+            {online ? <Wifi className="h-4 w-4 text-brand-600" /> : <WifiOff className="h-4 w-4 text-amber-600" />}
+            <span className={online ? "font-medium text-sage-700 dark:text-sage-200" : "font-medium text-amber-700 dark:text-amber-300"}>
+              {online ? "Online" : "Offline — sales are saved on this device"}
+            </span>
+            {fromCache && <span className="chip bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300"><CloudOff className="h-3 w-3" /> cached catalogue</span>}
+            {pending > 0 && <span className="chip bg-sage-100 text-sage-600 dark:bg-sage-800 dark:text-sage-300">{pending} queued</span>}
+            <div className="flex-1" />
+            {syncMsg && <span className="text-xs text-sage-500 dark:text-sage-400">{syncMsg}</span>}
+            {pending > 0 && (
+              <button onClick={() => sync(false)} disabled={syncing || !online}
+                className="btn-outline !px-3 !py-1 text-xs" title={online ? "Sync queued sales" : "Reconnect to sync"}>
+                {syncing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />} Sync now
+              </button>
+            )}
+          </div>
+        )}
         <div className="relative">
           <ScanLine className="pointer-events-none absolute left-3.5 top-1/2 h-5 w-5 -translate-y-1/2 text-brand-500" />
           <input
