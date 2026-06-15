@@ -165,9 +165,10 @@ export default function Layout() {
           <button className="btn-ghost !px-2 !py-2 !text-[rgb(var(--topbar-text))] lg:hidden" onClick={() => setOpen(true)}>
             <Menu className="h-5 w-5" />
           </button>
-          <button className="btn-ghost !hidden !px-2 !py-2 !text-[rgb(var(--topbar-text))] lg:!flex" onClick={toggleCollapsed}
-            aria-label="Collapse sidebar" title={collapsed ? "Expand sidebar" : "Collapse sidebar"}>
+          <button onClick={toggleCollapsed} aria-label="Collapse sidebar" title={collapsed ? "Expand sidebar" : "Collapse sidebar"}
+            className="hidden items-center gap-2 rounded-xl border border-sage-200 bg-white px-2.5 py-2 text-sm font-medium text-sage-600 transition hover:bg-sage-50 lg:flex dark:border-sage-800 dark:bg-sage-900 dark:text-sage-200 dark:hover:bg-sage-800">
             <PanelLeft className="h-5 w-5" />
+            <span className="hidden xl:inline">{collapsed ? "Expand" : "Collapse"}</span>
           </button>
           <div className="flex-1" />
           {moduleEnabled("branches") && (user?.role === "owner" || user?.role === "manager") && <BranchSwitcher />}
