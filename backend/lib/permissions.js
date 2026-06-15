@@ -8,6 +8,7 @@ const PERMISSIONS = [
   { key: "pos.sell",            label: "Make sales",                    group: "Point of Sale" },
   { key: "pos.discount",        label: "Apply discounts",              group: "Point of Sale" },
   { key: "pos.account",         label: "Sell on account (credit)",     group: "Point of Sale" },
+  { key: "pos.refund",          label: "Process returns / refunds",    group: "Point of Sale" },
 
   { key: "inventory.manage",    label: "Add & edit products",          group: "Inventory" },
   { key: "inventory.receive",   label: "Receive stock",                group: "Inventory" },
@@ -39,7 +40,7 @@ const ALL_KEYS = PERMISSIONS.map((p) => p.key);
 const DEFAULTS = {
   manager: ALL_KEYS.slice(),
   pharmacist: [
-    "pos.sell", "pos.discount", "pos.account",
+    "pos.sell", "pos.discount", "pos.account", "pos.refund",
     "inventory.manage", "inventory.receive", "inventory.adjust", "inventory.categories",
     "purchasing.manage", "purchasing.receive",
     "customers.manage", "customers.payment", "controlled.dispense",
@@ -83,4 +84,16 @@ async function seedIfEmpty() {
   return true;
 }
 
-module.exports = { ROLES, PERMISSIONS, ALL_KEYS, DEFAULTS, loadRolePerms, invalidate, userCan, permsForRole, seedIfEmpty };
+// Backfill a newly-introduced permission for existing installs — runs once
+// (skips if any role already has it, so it never undoes an owner's revocation).
+async function backfillPermission(key, roles) {
+  const { rows } = await pool.query("SELECT 1 FROM role_permissions WHERE permission = $1 LIMIT 1", [key]);
+  if (rows.length) return false;
+  for (const role of roles) {
+    await pool.query("INSERT INTO role_permissions (role, permission) VALUES ($1,$2) ON CONFLICT DO NOTHING", [role, key]);
+  }
+  invalidate();
+  return true;
+}
+
+module.exports = { ROLES, PERMISSIONS, ALL_KEYS, DEFAULTS, loadRolePerms, invalidate, userCan, permsForRole, seedIfEmpty, backfillPermission };

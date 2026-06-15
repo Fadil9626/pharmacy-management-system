@@ -14,13 +14,22 @@ exports.summary = async (req, res) => {
       kToday, kCogs, kWeek, stockVal, products, customers, lowCount, nearCount,
       trend, byPayment, top, recent, lowItems, expItems,
     ] = await Promise.all([
-      // today sales
+      // today sales (net of refunds)
       pool.query(
-        `SELECT COALESCE(SUM(total),0)::float v, COALESCE(SUM(discount),0)::float disc, COUNT(*)::int n
+        `SELECT COALESCE(SUM(total),0)::float
+                - COALESCE((SELECT SUM(total) FROM sale_returns r
+                            WHERE r.created_at::date = CURRENT_DATE AND ($1::int IS NULL OR r.branch_id = $1)),0)::float AS v,
+                COALESCE(SUM(discount),0)::float disc, COUNT(*)::int n
          FROM sales WHERE created_at::date = CURRENT_DATE AND ($1::int IS NULL OR branch_id = $1)`, B),
-      // today COGS (for gross profit)
+      // today COGS (for gross profit) — net of returned cost
       pool.query(
-        `SELECT COALESCE(SUM(si.qty * b.cost_price),0)::float cogs
+        `SELECT
+           COALESCE(SUM(si.qty * b.cost_price),0)::float
+           - COALESCE((SELECT SUM(ri.qty * b2.cost_price) FROM sale_return_items ri
+                       JOIN sale_returns r ON ri.return_id = r.id
+                       LEFT JOIN product_batches b2 ON ri.batch_id = b2.id
+                       WHERE r.created_at::date = CURRENT_DATE AND ($1::int IS NULL OR r.branch_id = $1)),0)::float
+           AS cogs
          FROM sale_items si JOIN sales s ON si.sale_id = s.id
          LEFT JOIN product_batches b ON si.batch_id = b.id
          WHERE s.created_at::date = CURRENT_DATE AND ($1::int IS NULL OR s.branch_id = $1)`, B),

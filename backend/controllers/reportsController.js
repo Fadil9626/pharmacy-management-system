@@ -19,7 +19,7 @@ exports.sales = async (req, res) => {
   const branchId = branchOf(req);
   const { from, to } = range(req);
   try {
-    const [summary, cogs, byDay, byPayment, top] = await Promise.all([
+    const [summary, refunds, cogs, byDay, byPayment, top] = await Promise.all([
       pool.query(
         `SELECT COUNT(*)::int AS txns,
                 COALESCE(SUM(total), 0)::float    AS revenue,
@@ -27,6 +27,16 @@ exports.sales = async (req, res) => {
                 COALESCE(SUM(discount), 0)::float AS discounts
          FROM sales
          WHERE created_at::date BETWEEN $1 AND $2 AND ($3::int IS NULL OR branch_id = $3)`,
+        [from, to, branchId]
+      ),
+      pool.query(
+        `SELECT COUNT(*)::int AS n, COALESCE(SUM(total),0)::float AS amount,
+                COALESCE((SELECT SUM(ri.qty * b.cost_price) FROM sale_return_items ri
+                          JOIN sale_returns r2 ON ri.return_id = r2.id
+                          LEFT JOIN product_batches b ON ri.batch_id = b.id
+                          WHERE r2.created_at::date BETWEEN $1 AND $2 AND ($3::int IS NULL OR r2.branch_id = $3)),0)::float AS cost
+         FROM sale_returns r
+         WHERE r.created_at::date BETWEEN $1 AND $2 AND ($3::int IS NULL OR r.branch_id = $3)`,
         [from, to, branchId]
       ),
       pool.query(
@@ -68,18 +78,25 @@ exports.sales = async (req, res) => {
     ]);
 
     const s = summary.rows[0];
-    const cogsVal = cogs.rows[0].cogs;
-    const grossProfit = s.revenue - cogsVal;
-    const margin = s.revenue > 0 ? (grossProfit / s.revenue) * 100 : 0;
+    const ref = refunds.rows[0];
+    const grossRevenue = s.revenue;            // before refunds
+    const revenue = grossRevenue - ref.amount; // net of refunds
+    const cogsVal = cogs.rows[0].cogs - ref.cost; // net of returned cost
+    const grossProfit = revenue - cogsVal;
+    const margin = revenue > 0 ? (grossProfit / revenue) * 100 : 0;
 
     res.json({
       from, to,
       summary: {
         ...s,
+        revenue,                  // net
+        gross_revenue: grossRevenue,
+        refunds: ref.amount,
+        refund_count: ref.n,
         cogs: cogsVal,
         gross_profit: grossProfit,
         margin_pct: margin,
-        avg_sale: s.txns > 0 ? s.revenue / s.txns : 0,
+        avg_sale: s.txns > 0 ? grossRevenue / s.txns : 0,
       },
       by_day: byDay.rows,
       by_payment: byPayment.rows,

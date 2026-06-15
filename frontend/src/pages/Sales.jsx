@@ -4,22 +4,24 @@ import { useAuth } from "../context/AuthContext.jsx";
 import ReceiptModal from "../components/Receipt.jsx";
 import { money } from "../lib/money.js";
 import {
-  Receipt, Search, Loader2, Eye, Banknote, CreditCard, Smartphone,
+  Receipt, Search, Loader2, Eye, Banknote, CreditCard, Smartphone, Undo2, X, CheckCircle2,
 } from "lucide-react";
 
-const PAY_ICON = { cash: Banknote, card: CreditCard, mobile: Smartphone };
+const PAY_ICON = { cash: Banknote, card: CreditCard, mobile: Smartphone, account: Banknote };
 
 export default function Sales() {
-  const { settings } = useAuth();
+  const { settings, can } = useAuth();
   const [sales, setSales] = useState(null);
   const [q, setQ] = useState("");
   const [err, setErr] = useState("");
   const [detail, setDetail] = useState(null);
   const [loadingDetail, setLoadingDetail] = useState(false);
+  const [returnFor, setReturnFor] = useState(null); // sale id to return
+  const [refund, setRefund] = useState(null);        // completed refund receipt
+  const canRefund = can("pos.refund");
 
-  useEffect(() => {
-    api("/api/sales", { params: { limit: 200 } }).then(setSales).catch((e) => setErr(e.message));
-  }, []);
+  const load = () => api("/api/sales", { params: { limit: 200 } }).then(setSales).catch((e) => setErr(e.message));
+  useEffect(() => { load(); }, []);
 
   const filtered = useMemo(() => {
     if (!sales) return [];
@@ -94,9 +96,16 @@ export default function Sales() {
                     </td>
                     <td className="px-5 py-3.5 text-right font-semibold text-sage-900 dark:text-sage-50">{money(s.total)}</td>
                     <td className="px-5 py-3.5 text-right">
-                      <button className="btn-outline !px-3 !py-1.5 text-xs" onClick={() => openReceipt(s.id)} disabled={loadingDetail}>
-                        <Eye className="h-3.5 w-3.5" /> View
-                      </button>
+                      <div className="flex justify-end gap-1.5">
+                        <button className="btn-outline !px-3 !py-1.5 text-xs" onClick={() => openReceipt(s.id)} disabled={loadingDetail}>
+                          <Eye className="h-3.5 w-3.5" /> View
+                        </button>
+                        {canRefund && (
+                          <button className="btn-ghost !px-2 !py-1.5 text-xs text-sage-400 hover:text-rose-500" onClick={() => setReturnFor(s.id)} title="Return / refund">
+                            <Undo2 className="h-4 w-4" />
+                          </button>
+                        )}
+                      </div>
                     </td>
                   </tr>
                 );
@@ -109,6 +118,127 @@ export default function Sales() {
       {detail && (
         <ReceiptModal receipt={detail} settings={settings} title={`Receipt ${detail.receipt_no}`} onClose={() => setDetail(null)} />
       )}
+      {returnFor && (
+        <ReturnModal saleId={returnFor} onClose={() => setReturnFor(null)}
+          onDone={(r) => { setReturnFor(null); setRefund(r); load(); }} />
+      )}
+      {refund && (
+        <ReceiptModal receipt={{ ...refund, payment_method: refund.refund_method }} settings={settings}
+          title={`Refund ${refund.receipt_no}`} onClose={() => setRefund(null)} />
+      )}
+    </div>
+  );
+}
+
+function ReturnModal({ saleId, onClose, onDone }) {
+  const [sale, setSale] = useState(null);
+  const [qty, setQty] = useState({});      // sale_item_id -> qty to return
+  const [reason, setReason] = useState("");
+  const [method, setMethod] = useState("cash");
+  const [restock, setRestock] = useState(true);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+
+  useEffect(() => {
+    api(`/api/sales/${saleId}`).then((s) => {
+      setSale(s);
+      setMethod(s.payment_method === "account" ? "account" : "cash");
+    }).catch((e) => setErr(e.message));
+  }, [saleId]);
+
+  if (err && !sale) return (
+    <Modal title="Return / refund" onClose={onClose}><div className="text-sm text-rose-600">{err}</div></Modal>
+  );
+  if (!sale) return <Modal title="Return / refund" onClose={onClose}><div className="flex h-24 items-center justify-center text-sage-400"><Loader2 className="h-5 w-5 animate-spin" /></div></Modal>;
+
+  const lines = sale.items.map((it) => ({ ...it, remaining: it.qty - (it.returned_qty || 0) }));
+  const refundTotal = lines.reduce((s, l) => s + (Number(qty[l.id]) || 0) * Number(l.unit_price), 0);
+  const anything = lines.some((l) => Number(qty[l.id]) > 0);
+
+  const submit = async () => {
+    const items = lines
+      .filter((l) => Number(qty[l.id]) > 0)
+      .map((l) => ({ sale_item_id: l.id, qty: Number(qty[l.id]) }));
+    if (!items.length) return;
+    setBusy(true); setErr("");
+    try {
+      const r = await api(`/api/sales/${saleId}/return`, { method: "POST", body: { items, reason, refund_method: method, restock } });
+      onDone(r);
+    } catch (e) { setErr(e.message); setBusy(false); }
+  };
+
+  return (
+    <Modal title={`Return · ${sale.receipt_no}`} onClose={onClose} wide>
+      <div className="space-y-4">
+        <p className="text-sm text-sage-500 dark:text-sage-400">Choose how many of each item to return. Restocking returns them to inventory.</p>
+        <div className="space-y-2">
+          {lines.map((l) => (
+            <div key={l.id} className="flex items-center justify-between gap-3 rounded-xl border border-sage-200 px-3 py-2 dark:border-sage-800">
+              <div className="min-w-0">
+                <div className="truncate text-sm font-medium text-sage-900 dark:text-sage-50">{l.name}</div>
+                <div className="text-xs text-sage-400">{money(l.unit_price)} · sold {l.qty}{l.returned_qty ? ` · ${l.returned_qty} returned` : ""}</div>
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="text-xs text-sage-400">of {l.remaining}</span>
+                <input type="number" min="0" max={l.remaining} disabled={l.remaining <= 0}
+                  className="input w-20 text-right !py-1.5 disabled:opacity-40"
+                  value={qty[l.id] || ""} onChange={(e) => {
+                    const v = Math.max(0, Math.min(l.remaining, parseInt(e.target.value, 10) || 0));
+                    setQty({ ...qty, [l.id]: v });
+                  }} />
+              </div>
+            </div>
+          ))}
+        </div>
+
+        <div className="grid gap-3 sm:grid-cols-2">
+          <div>
+            <label className="label">Reason</label>
+            <input className="input" value={reason} onChange={(e) => setReason(e.target.value)} placeholder="e.g. damaged, wrong item" />
+          </div>
+          <div>
+            <label className="label">Refund via</label>
+            <select className="input" value={method} onChange={(e) => setMethod(e.target.value)}>
+              <option value="cash">Cash</option><option value="card">Card</option>
+              <option value="mobile">Mobile</option>
+              {sale.customer_id && <option value="account">Customer account</option>}
+            </select>
+          </div>
+        </div>
+
+        <label className="flex items-center gap-2.5 text-sm text-sage-700 dark:text-sage-300">
+          <input type="checkbox" checked={restock} onChange={(e) => setRestock(e.target.checked)} className="h-4 w-4 rounded border-sage-300 text-brand-600 focus:ring-brand-500" />
+          Return items to stock
+        </label>
+
+        <div className="flex items-center justify-between rounded-xl bg-sage-50 px-4 py-3 dark:bg-sage-950">
+          <span className="text-sm text-sage-500">Refund amount</span>
+          <span className="text-xl font-semibold text-sage-900 dark:text-sage-50">{money(refundTotal)}</span>
+        </div>
+
+        {err && <div className="text-sm text-rose-600 dark:text-rose-400">{err}</div>}
+        <div className="flex justify-end gap-2">
+          <button className="btn-outline" onClick={onClose}>Cancel</button>
+          <button className="btn-primary" onClick={submit} disabled={busy || !anything}>
+            {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Undo2 className="h-4 w-4" />} Process refund
+          </button>
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
+function Modal({ title, onClose, children, wide }) {
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+      <div className="absolute inset-0 bg-sage-950/50 backdrop-blur-sm" onClick={onClose} />
+      <div className={`card relative z-10 max-h-[88vh] w-full overflow-y-auto p-6 ${wide ? "max-w-lg" : "max-w-md"}`}>
+        <div className="mb-5 flex items-center justify-between">
+          <h3 className="font-display text-lg font-semibold text-sage-900 dark:text-sage-50">{title}</h3>
+          <button onClick={onClose} className="btn-ghost !px-2 !py-2"><X className="h-5 w-5" /></button>
+        </div>
+        {children}
+      </div>
     </div>
   );
 }

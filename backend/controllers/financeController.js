@@ -14,11 +14,17 @@ exports.openShiftId = openShiftId;
 
 // Live tally for a shift: sales by method, cash movements, expenses, expected cash.
 async function tally(shiftId) {
-  const [shiftRes, byMethod, moves, exp] = await Promise.all([
+  const [shiftRes, byMethod, refunds, moves, exp] = await Promise.all([
     pool.query("SELECT * FROM shifts WHERE id = $1", [shiftId]),
     pool.query(
       `SELECT payment_method, COUNT(*)::int AS n, COALESCE(SUM(total),0)::float AS amount
        FROM sales WHERE shift_id = $1 GROUP BY payment_method`,
+      [shiftId]
+    ),
+    pool.query(
+      `SELECT COALESCE(SUM(total),0)::float AS total,
+              COALESCE(SUM(total) FILTER (WHERE refund_method='cash'),0)::float AS cash
+       FROM sale_returns WHERE shift_id = $1`,
       [shiftId]
     ),
     pool.query(
@@ -40,12 +46,14 @@ async function tally(shiftId) {
   const cashSales = byMethod.rows.find((r) => r.payment_method === "cash")?.amount || 0;
   const m = moves.rows[0];
   const e = exp.rows[0];
-  const expected = Number(shift.opening_float) + cashSales + m.topups - m.drops - m.payouts - e.till_expenses;
+  const ref = refunds.rows[0];
+  const expected = Number(shift.opening_float) + cashSales - ref.cash + m.topups - m.drops - m.payouts - e.till_expenses;
   return {
     by_method: byMethod.rows,
     total_sales: byMethod.rows.reduce((s, r) => s + r.amount, 0),
     sales_count: byMethod.rows.reduce((s, r) => s + r.n, 0),
     cash_sales: cashSales,
+    refunds: ref.total, cash_refunds: ref.cash,
     drops: m.drops, payouts: m.payouts, topups: m.topups,
     till_expenses: e.till_expenses, total_expenses: e.total_expenses,
     expected_cash: Math.round(expected * 100) / 100,

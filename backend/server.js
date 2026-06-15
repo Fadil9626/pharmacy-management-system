@@ -10,7 +10,7 @@ const { protect, authorize } = require("./middleware/auth");
 const { requireModule } = require("./middleware/requireModule");
 const requirePermission = require("./middleware/requirePermission");
 const adminApiKey = require("./middleware/adminApiKey");
-const { seedIfEmpty } = require("./lib/permissions");
+const { seedIfEmpty, backfillPermission } = require("./lib/permissions");
 const permissions = require("./controllers/permissionsController");
 const auth = require("./controllers/authController");
 const modules = require("./controllers/modulesController");
@@ -58,6 +58,7 @@ app.use(express.json({ limit: "2mb" }));
       console.log("✅ Seeded admin — email: admin@remedy.local  password: admin123");
     }
     if (await seedIfEmpty()) console.log("✅ Seeded default role permissions");
+    await backfillPermission("pos.refund", ["manager", "pharmacist"]);
     console.log("✅ Remedy database ready");
   } catch (e) {
     console.error("❌ DB init failed:", e.message);
@@ -145,6 +146,8 @@ app.get("/api/pos/products", protect, requireModule("pos"), sales.sellableProduc
 app.post("/api/sales", protect, requireModule("pos"), requirePermission("pos.sell"), sales.createSale);
 app.get("/api/sales", protect, requireModule("pos"), sales.listSales);
 app.get("/api/sales/:id", protect, requireModule("pos"), sales.getSale);
+app.post("/api/sales/:id/return", protect, requireModule("pos"), requirePermission("pos.refund"), sales.createReturn);
+app.get("/api/returns", protect, requireModule("pos"), sales.listReturns);
 
 // Purchasing
 app.post("/api/suppliers", protect, authorize("owner", "manager"), purchasing.createSupplier);

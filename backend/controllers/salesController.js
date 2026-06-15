@@ -253,11 +253,138 @@ exports.getSale = async (req, res) => {
       [req.params.id]
     );
     if (!sale.rows.length) return res.status(404).json({ message: "Sale not found" });
+    // include how much of each line has already been returned
     const items = await pool.query(
-      "SELECT * FROM sale_items WHERE sale_id = $1 ORDER BY id",
+      `SELECT si.*, COALESCE(r.returned, 0)::int AS returned_qty
+       FROM sale_items si
+       LEFT JOIN (SELECT sale_item_id, SUM(qty) returned FROM sale_return_items GROUP BY sale_item_id) r
+         ON r.sale_item_id = si.id
+       WHERE si.sale_id = $1 ORDER BY si.id`,
       [req.params.id]
     );
-    res.json({ ...sale.rows[0], items: items.rows });
+    const returns = await pool.query(
+      "SELECT id, receipt_no, total, refund_method, created_at FROM sale_returns WHERE sale_id = $1 ORDER BY created_at",
+      [req.params.id]
+    );
+    res.json({ ...sale.rows[0], items: items.rows, returns: returns.rows });
+  } catch (e) {
+    res.status(500).json({ message: e.message });
+  }
+};
+
+// Process a return/refund against a sale (full or partial).
+exports.createReturn = async (req, res) => {
+  const saleId = Number(req.params.id);
+  const { items, reason, refund_method = "cash", restock = true } = req.body || {};
+  if (!Array.isArray(items) || items.length === 0)
+    return res.status(400).json({ message: "Select at least one item to return" });
+
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const saleRes = await client.query("SELECT * FROM sales WHERE id = $1 FOR UPDATE", [saleId]);
+    if (!saleRes.rows.length) throw new Error("Sale not found");
+    const sale = saleRes.rows[0];
+
+    if (await moduleOn("finance", client)) {
+      const sid = await openShiftId(req.user.id, client);
+      if (!sid) throw new Error("Open your till before processing a refund");
+    }
+
+    const lineRows = await client.query(
+      `SELECT si.*, COALESCE(r.returned, 0)::int AS returned
+       FROM sale_items si
+       LEFT JOIN (SELECT sale_item_id, SUM(qty) returned FROM sale_return_items GROUP BY sale_item_id) r
+         ON r.sale_item_id = si.id
+       WHERE si.sale_id = $1`,
+      [saleId]
+    );
+    const byId = new Map(lineRows.rows.map((l) => [l.id, l]));
+
+    let subtotal = 0;
+    const retLines = [];
+    for (const it of items) {
+      const lineId = Number(it.sale_item_id);
+      const qty = Number(it.qty);
+      if (!lineId || !qty || qty <= 0) continue;
+      const line = byId.get(lineId);
+      if (!line) throw new Error("Invalid return line");
+      const remaining = line.qty - line.returned;
+      if (qty > remaining) throw new Error(`Only ${remaining} of "${line.name}" can still be returned`);
+      const unit = Number(line.unit_price);
+      const lineTotal = Math.round(qty * unit * 100) / 100;
+      subtotal += lineTotal;
+      retLines.push({ sale_item_id: lineId, product_id: line.product_id, batch_id: line.batch_id, name: line.name, qty, unit_price: unit, line_total: lineTotal });
+    }
+    if (retLines.length === 0) throw new Error("Nothing to return");
+
+    // proportional discount + tax from the original sale
+    const gross = Number(sale.subtotal) || subtotal;
+    const propDiscount = gross > 0 ? Math.round((Number(sale.discount) * subtotal / gross) * 100) / 100 : 0;
+    const propTax = gross > 0 ? Math.round((Number(sale.tax) * subtotal / gross) * 100) / 100 : 0;
+    const total = Math.round((subtotal - propDiscount + propTax) * 100) / 100;
+
+    const shiftId = await openShiftId(req.user.id, client);
+    const ins = await client.query(
+      `INSERT INTO sale_returns (sale_id, branch_id, user_id, customer_id, shift_id, reason, refund_method, subtotal, tax, total, restocked)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING id, created_at`,
+      [saleId, sale.branch_id, req.user.id, sale.customer_id, shiftId, reason || null, refund_method, subtotal, propTax, total, !!restock]
+    );
+    const retId = ins.rows[0].id;
+    const receiptNo = `RT-${String(retId).padStart(5, "0")}`;
+    await client.query("UPDATE sale_returns SET receipt_no = $1 WHERE id = $2", [receiptNo, retId]);
+
+    for (const l of retLines) {
+      await client.query(
+        `INSERT INTO sale_return_items (return_id, sale_item_id, product_id, batch_id, name, qty, unit_price, line_total)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
+        [retId, l.sale_item_id, l.product_id, l.batch_id, l.name, l.qty, l.unit_price, l.line_total]
+      );
+      if (restock && l.batch_id) {
+        await client.query("UPDATE product_batches SET quantity = quantity + $1 WHERE id = $2", [l.qty, l.batch_id]);
+      }
+    }
+
+    if (sale.customer_id) {
+      const reduceBal = refund_method === "account" ? total : 0;
+      await client.query(
+        `UPDATE customers SET
+           balance = GREATEST(0, balance - $1),
+           total_spent = GREATEST(0, total_spent - $2),
+           loyalty_points = GREATEST(0, loyalty_points - $3)
+         WHERE id = $4`,
+        [reduceBal, total, Math.floor(total), sale.customer_id]
+      );
+    }
+
+    await client.query("COMMIT");
+    res.status(201).json({
+      id: retId, receipt_no: receiptNo, sale_receipt: sale.receipt_no,
+      subtotal, tax: propTax, total, refund_method, restocked: !!restock,
+      created_at: ins.rows[0].created_at, items: retLines,
+    });
+  } catch (e) {
+    await client.query("ROLLBACK").catch(() => {});
+    res.status(400).json({ message: e.message });
+  } finally {
+    client.release();
+  }
+};
+
+exports.listReturns = async (req, res) => {
+  const branchId = branchOf(req);
+  try {
+    const { rows } = await pool.query(
+      `SELECT r.id, r.receipt_no, r.total, r.refund_method, r.reason, r.restocked, r.created_at,
+              s.receipt_no AS sale_receipt, u.full_name AS cashier
+       FROM sale_returns r
+       LEFT JOIN sales s ON r.sale_id = s.id
+       LEFT JOIN users u ON r.user_id = u.id
+       WHERE ($1::int IS NULL OR r.branch_id = $1)
+       ORDER BY r.created_at DESC LIMIT 100`,
+      [branchId]
+    );
+    res.json(rows);
   } catch (e) {
     res.status(500).json({ message: e.message });
   }
