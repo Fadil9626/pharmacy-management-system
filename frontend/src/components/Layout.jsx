@@ -8,7 +8,7 @@ import { api, getActiveBranch, setActiveBranch } from "../lib/api.js";
 import {
   Pill, Plus, LayoutDashboard, Boxes, ShoppingCart, Receipt, Truck, FileText,
   Users, ClipboardList, ShieldAlert, Wallet, GitBranch, Moon, Sun,
-  LogOut, Menu, X, Settings as SettingsIcon, UserCog, TrendingUp,
+  LogOut, Menu, X, Settings as SettingsIcon, UserCog, TrendingUp, PanelLeft,
 } from "lucide-react";
 
 // nav item → required module key (null = always visible). "soon" items render disabled.
@@ -58,20 +58,22 @@ function BranchSwitcher() {
   );
 }
 
-function Brand({ name, logo }) {
+function Brand({ name, logo, collapsed }) {
   return (
-    <div className="flex items-center gap-2.5 px-2">
+    <div className={`flex items-center gap-2.5 ${collapsed ? "justify-center px-0" : "px-2"}`}>
       {logo ? (
         <img src={logo} alt="" className="h-9 w-9 rounded-xl object-contain" />
       ) : (
-        <span className="relative grid h-9 w-9 place-items-center rounded-xl bg-brand-600 text-brand-50">
+        <span className="relative grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-brand-600 text-brand-50">
           <Pill className="h-5 w-5" />
           <Plus className="absolute -right-1 -top-1 h-3.5 w-3.5 rounded-full bg-brand-400 p-0.5 text-brand-900" />
         </span>
       )}
-      <span className="truncate font-display text-xl font-semibold tracking-tight text-[rgb(var(--sidebar-text))]">
-        {name || "Remedy"}
-      </span>
+      {!collapsed && (
+        <span className="truncate font-display text-xl font-semibold tracking-tight text-[rgb(var(--sidebar-text))]">
+          {name || "Remedy"}
+        </span>
+      )}
     </div>
   );
 }
@@ -82,6 +84,9 @@ export default function Layout() {
   const navigate = useNavigate();
   const location = useLocation();
   const [open, setOpen] = useState(false);
+  const [collapsed, setCollapsed] = useState(() => localStorage.getItem("remedy-sidebar") === "1");
+  const toggleCollapsed = () =>
+    setCollapsed((c) => { const v = !c; localStorage.setItem("remedy-sidebar", v ? "1" : "0"); return v; });
 
   const items = NAV.filter(
     (n) =>
@@ -94,10 +99,11 @@ export default function Layout() {
     navigate("/login", { replace: true });
   };
 
-  const SidebarBody = (
+  // `collapsed` only applies to the desktop rail; the mobile drawer is always full.
+  const renderSidebar = (collapsed) => (
     <div className="flex h-full flex-col">
-      <div className="flex h-16 items-center justify-between px-3">
-        <Brand name={settings?.pharmacy_name} logo={settings?.logo} />
+      <div className={`flex h-16 items-center px-3 ${collapsed ? "justify-center" : "justify-between"}`}>
+        <Brand name={settings?.pharmacy_name} logo={settings?.logo} collapsed={collapsed} />
         <button className="btn-ghost !px-2 !py-2 lg:hidden" onClick={() => setOpen(false)}>
           <X className="h-5 w-5" />
         </button>
@@ -105,21 +111,22 @@ export default function Layout() {
       <nav className="flex-1 space-y-1 overflow-y-auto px-3 py-2">
         {items.map((n) => (
           <Fragment key={n.to}>
-          {n.divider && <div className="my-2 border-t sidebar-divider" />}
+          {n.divider && !collapsed && <div className="my-2 border-t sidebar-divider" />}
           <NavLink
             to={n.to}
             end={n.end}
+            title={collapsed ? n.label : undefined}
             onClick={(e) => {
               if (n.soon) e.preventDefault();
               else setOpen(false);
             }}
             className={({ isActive }) =>
-              ["nav-item", n.soon ? "!cursor-default opacity-45" : "", isActive ? "nav-item-active shadow-soft" : ""].join(" ")
+              ["nav-item", collapsed ? "justify-center !px-2" : "", n.soon ? "!cursor-default opacity-45" : "", isActive ? "nav-item-active shadow-soft" : ""].join(" ")
             }
           >
             <n.icon className="h-[18px] w-[18px] shrink-0" />
-            <span className="flex-1">{n.label}</span>
-            {n.soon && (
+            {!collapsed && <span className="flex-1">{n.label}</span>}
+            {!collapsed && n.soon && (
               <span className="chip bg-black/10 text-current opacity-70 dark:bg-white/10">soon</span>
             )}
           </NavLink>
@@ -127,8 +134,9 @@ export default function Layout() {
         ))}
       </nav>
       <div className="border-t p-3 sidebar-divider">
-        <button onClick={doLogout} className="nav-item w-full justify-start">
-          <LogOut className="h-[18px] w-[18px]" /> Sign out
+        <button onClick={doLogout} title={collapsed ? "Sign out" : undefined}
+          className={`nav-item w-full ${collapsed ? "justify-center !px-2" : "justify-start"}`}>
+          <LogOut className="h-[18px] w-[18px]" /> {!collapsed && "Sign out"}
         </button>
       </div>
     </div>
@@ -137,8 +145,8 @@ export default function Layout() {
   return (
     <div className="min-h-screen lg:flex">
       {/* Desktop sidebar — pinned full-height so it stays in view while content scrolls */}
-      <aside className="app-sidebar hidden w-64 shrink-0 border-r lg:sticky lg:top-0 lg:block lg:h-screen">
-        {SidebarBody}
+      <aside className={`app-sidebar hidden shrink-0 border-r transition-[width] duration-200 lg:sticky lg:top-0 lg:block lg:h-screen ${collapsed ? "lg:w-[68px]" : "lg:w-64"}`}>
+        {renderSidebar(collapsed)}
       </aside>
 
       {/* Mobile drawer */}
@@ -146,7 +154,7 @@ export default function Layout() {
         <div className="fixed inset-0 z-40 lg:hidden">
           <div className="absolute inset-0 bg-sage-950/40" onClick={() => setOpen(false)} />
           <aside className="app-sidebar absolute left-0 top-0 h-full w-72 border-r">
-            {SidebarBody}
+            {renderSidebar(false)}
           </aside>
         </div>
       )}
@@ -156,6 +164,10 @@ export default function Layout() {
         <header className="app-topbar sticky top-0 z-30 flex h-16 items-center gap-3 border-b px-4 backdrop-blur lg:px-8">
           <button className="btn-ghost !px-2 !py-2 !text-[rgb(var(--topbar-text))] lg:hidden" onClick={() => setOpen(true)}>
             <Menu className="h-5 w-5" />
+          </button>
+          <button className="btn-ghost !hidden !px-2 !py-2 !text-[rgb(var(--topbar-text))] lg:!flex" onClick={toggleCollapsed}
+            aria-label="Collapse sidebar" title={collapsed ? "Expand sidebar" : "Collapse sidebar"}>
+            <PanelLeft className="h-5 w-5" />
           </button>
           <div className="flex-1" />
           {moduleEnabled("branches") && (user?.role === "owner" || user?.role === "manager") && <BranchSwitcher />}

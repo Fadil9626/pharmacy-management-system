@@ -8,7 +8,7 @@ import { syncQueue } from "../lib/offlineSync.js";
 import {
   Search, Plus, Minus, Trash2, ShoppingCart, Loader2, CheckCircle2, X,
   ShieldAlert, Banknote, CreditCard, Smartphone, ScanLine, HandCoins, Wallet, Lock,
-  PauseCircle, Clock3, PlayCircle, Wifi, WifiOff, RefreshCw, CloudOff,
+  PauseCircle, Clock3, PlayCircle, Wifi, WifiOff, RefreshCw, CloudOff, Maximize2, Minimize2,
 } from "lucide-react";
 
 const uuid = () =>
@@ -54,7 +54,20 @@ export default function POS() {
   const [pending, setPending] = useState(0);         // queued offline sales
   const [syncing, setSyncing] = useState(false);
   const [syncMsg, setSyncMsg] = useState("");
+  const [isFs, setIsFs] = useState(false);
   const searchRef = useRef(null);
+  const posRef = useRef(null);
+
+  // Full-screen the till (browser Fullscreen API — needs a click to start).
+  useEffect(() => {
+    const onFs = () => setIsFs(!!document.fullscreenElement);
+    document.addEventListener("fullscreenchange", onFs);
+    return () => document.removeEventListener("fullscreenchange", onFs);
+  }, []);
+  const toggleFs = () => {
+    if (document.fullscreenElement) document.exitFullscreen?.();
+    else posRef.current?.requestFullscreen?.().catch(() => {});
+  };
 
   const loadParked = () => api("/api/pos/parked").then((r) => setParkedCount(r.length)).catch(() => {});
 
@@ -318,7 +331,8 @@ export default function POS() {
   }
 
   return (
-    <div className="grid h-[calc(100vh-7rem)] grid-cols-1 gap-5 lg:grid-cols-[1fr_400px]">
+    <div ref={posRef} className={isFs ? "h-screen overflow-y-auto bg-sage-50 p-4 dark:bg-sage-950" : ""}>
+    <div className={`grid ${isFs ? "h-[calc(100vh-2rem)]" : "h-[calc(100vh-7rem)]"} grid-cols-1 gap-5 lg:grid-cols-[1fr_400px]`}>
       {/* Catalogue */}
       <div className="flex min-h-0 flex-col">
         {(!online || fromCache || pending > 0 || syncMsg) && (
@@ -341,16 +355,21 @@ export default function POS() {
             )}
           </div>
         )}
-        <div className="relative">
-          <ScanLine className="pointer-events-none absolute left-3.5 top-1/2 h-5 w-5 -translate-y-1/2 text-brand-500" />
-          <input
-            ref={searchRef}
-            className="input py-3 pl-11 text-base"
-            placeholder="Scan barcode or search a product, then press Enter…"
-            value={q}
-            onChange={(e) => setQ(e.target.value)}
-            onKeyDown={onSearchKey}
-          />
+        <div className="flex gap-2">
+          <div className="relative flex-1">
+            <ScanLine className="pointer-events-none absolute left-3.5 top-1/2 h-5 w-5 -translate-y-1/2 text-brand-500" />
+            <input
+              ref={searchRef}
+              className="input py-3 pl-11 text-base"
+              placeholder="Scan barcode or search a product, then press Enter…"
+              value={q}
+              onChange={(e) => setQ(e.target.value)}
+              onKeyDown={onSearchKey}
+            />
+          </div>
+          <button type="button" onClick={toggleFs} className="btn-outline shrink-0 !px-3.5" title={isFs ? "Exit full screen" : "Full screen"}>
+            {isFs ? <Minimize2 className="h-5 w-5" /> : <Maximize2 className="h-5 w-5" />}
+          </button>
         </div>
 
         <div className="mt-4 min-h-0 flex-1 overflow-y-auto pr-1">
@@ -613,6 +632,7 @@ export default function POS() {
       {showHold && (
         <HoldModal defaultLabel={customer} total={total} onClose={() => setShowHold(false)} onHold={doPark} />
       )}
+    </div>
     </div>
   );
 }
