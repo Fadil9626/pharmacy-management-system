@@ -7,8 +7,9 @@ import ConfirmModal from "../components/Confirm.jsx";
 import {
   Search, Plus, PackagePlus, X, Loader2, AlertTriangle, CalendarClock,
   Boxes, ShieldAlert, Pencil, Layers, Trash2, SlidersHorizontal, Upload, Download, CheckCircle2, FileSpreadsheet,
-  ClipboardCheck,
+  ClipboardCheck, Barcode, Printer, RefreshCw,
 } from "lucide-react";
+import { barcodeSVG, printBarcodeLabels } from "../lib/barcode.js";
 
 const monthsUntil = (d) => {
   if (!d) return Infinity;
@@ -65,6 +66,7 @@ export default function Inventory() {
   const [showCategories, setShowCategories] = useState(false);
   const [showImport, setShowImport] = useState(false);
   const [showCount, setShowCount] = useState(false);
+  const [barcodeFor, setBarcodeFor] = useState(null);
   const [showProduct, setShowProduct] = useState(false);
   const [editFor, setEditFor] = useState(null);
   const [receiveFor, setReceiveFor] = useState(null);
@@ -227,6 +229,11 @@ export default function Inventory() {
                           <Layers className="h-4 w-4" />
                         </button>
                         {can("inventory.manage") && (
+                          <button className="btn-ghost !px-2 !py-1.5 text-xs" onClick={() => setBarcodeFor(p)} title="Barcode & labels">
+                            <Barcode className="h-4 w-4" />
+                          </button>
+                        )}
+                        {can("inventory.manage") && (
                           <button className="btn-ghost !px-2 !py-1.5 text-xs" onClick={() => setEditFor(p)} title="Edit">
                             <Pencil className="h-4 w-4" />
                           </button>
@@ -288,6 +295,9 @@ export default function Inventory() {
       )}
       {showCount && (
         <StockCountModal products={products || []} onClose={() => setShowCount(false)} onDone={() => { setShowCount(false); load(); }} />
+      )}
+      {barcodeFor && (
+        <BarcodeModal product={barcodeFor} settings={settings} onClose={() => setBarcodeFor(null)} onChanged={load} />
       )}
       {confirmDeactivate && (
         <ConfirmModal danger title="Deactivate product" confirmLabel="Deactivate"
@@ -394,7 +404,13 @@ function ProductModal({ product, categories = [], onClose, onSaved }) {
           </Field>
         </div>
         <Field label="Barcode">
-          <input className="input" value={f.barcode} onChange={set("barcode")} />
+          <div className="flex gap-2">
+            <input className="input" value={f.barcode} onChange={set("barcode")} placeholder="Scan or generate" />
+            <button type="button" className="btn-outline shrink-0" title="Generate an in-store barcode"
+              onClick={async () => { try { const { barcode } = await api("/api/barcode/generate", { method: "POST", body: {} }); setF((p) => ({ ...p, barcode })); } catch (e) { setErr(e.message); } }}>
+              <Barcode className="h-4 w-4" /> Generate
+            </button>
+          </div>
         </Field>
         <Field label="Surveillance indicator">
           <select className="input" value={f.surveillance_tag} onChange={set("surveillance_tag")}>
@@ -1018,5 +1034,53 @@ function StockCountModal({ products, onClose, onDone }) {
         )}
       </div>
     </div>
+  );
+}
+
+// Barcode preview, generate (in-store EAN-13), and print price/barcode labels.
+function BarcodeModal({ product, settings, onClose, onChanged }) {
+  const [code, setCode] = useState(product.barcode || "");
+  const [qty, setQty] = useState(1);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+
+  const generate = async () => {
+    setBusy(true); setErr("");
+    try {
+      const { barcode } = await api("/api/barcode/generate", { method: "POST", body: { product_id: product.id } });
+      setCode(barcode);
+      onChanged && onChanged();
+    } catch (e) { setErr(e.message); } finally { setBusy(false); }
+  };
+
+  return (
+    <Modal title={`Barcode · ${product.name}`} onClose={onClose}>
+      <div className="space-y-4">
+        {code ? (
+          <div className="flex flex-col items-center gap-2 rounded-xl border border-sage-200 bg-white p-4 dark:border-sage-800">
+            <div className="[&_svg]:max-w-full" dangerouslySetInnerHTML={{ __html: barcodeSVG(code) }} />
+          </div>
+        ) : (
+          <p className="rounded-xl bg-sage-50 px-4 py-6 text-center text-sm text-sage-500 dark:bg-sage-900 dark:text-sage-400">
+            No barcode yet. Generate an in-store barcode to print and stick on the product.
+          </p>
+        )}
+
+        {err && <div className="text-sm text-rose-600 dark:text-rose-400">{err}</div>}
+
+        <div className="flex items-end gap-2">
+          <Field label="Labels to print">
+            <input type="number" min="1" max="200" className="input !w-28" value={qty} onChange={(e) => setQty(e.target.value)} disabled={!code} />
+          </Field>
+          <div className="flex-1" />
+          <button type="button" className="btn-outline" onClick={generate} disabled={busy}>
+            {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />} {code ? "Regenerate" : "Generate"}
+          </button>
+          <button type="button" className="btn-primary" onClick={() => printBarcodeLabels({ ...product, barcode: code }, qty, settings)} disabled={!code}>
+            <Printer className="h-4 w-4" /> Print
+          </button>
+        </div>
+      </div>
+    </Modal>
   );
 }

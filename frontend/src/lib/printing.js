@@ -8,7 +8,7 @@ import { money } from "./money.js";
 const esc = (s) =>
   String(s == null ? "" : s).replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
 
-function openPrint(html, title) {
+export function openPrint(html, title) {
   const w = window.open("", "_blank", "width=420,height=640");
   if (!w) {
     alert("Pop-up blocked — allow pop-ups for Remedy to print.");

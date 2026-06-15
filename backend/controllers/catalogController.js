@@ -2,8 +2,25 @@ const pool = require("../config/db");
 const { pricingContext, effectivePrice } = require("../lib/pricing");
 const { effectiveBranch } = require("../lib/context");
 const { logAudit } = require("../lib/audit");
+const { uniqueEAN13 } = require("../lib/barcode");
 
 const branchOf = effectiveBranch;
+
+// Mint a unique in-store EAN-13. If product_id is given, assign + save it.
+exports.generateBarcode = async (req, res) => {
+  try {
+    const code = await uniqueEAN13();
+    const pid = Number(req.body?.product_id);
+    if (pid) {
+      const { rowCount } = await pool.query("UPDATE products SET barcode = $1 WHERE id = $2", [code, pid]);
+      if (!rowCount) return res.status(404).json({ message: "Product not found" });
+      logAudit(req, "barcode_assign", "product", pid, { barcode: code });
+    }
+    res.json({ barcode: code });
+  } catch (e) {
+    res.status(500).json({ message: e.message });
+  }
+};
 
 // Products with aggregated stock for a branch.
 exports.listProducts = async (req, res) => {
