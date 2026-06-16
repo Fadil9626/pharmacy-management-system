@@ -32,7 +32,7 @@ export default function Purchasing() {
   const [err, setErr] = useState("");
 
   const loadPOs = () => api("/api/purchase-orders").then(setPOs).catch((e) => setErr(e.message));
-  const loadReorder = () => api("/api/purchasing/reorder").then(setReorder).catch(() => {});
+  const loadReorder = () => api("/api/purchasing/reorder").then((r) => setReorder(r?.items ? r : { items: r || [] })).catch(() => {});
   const loadRefs = () =>
     Promise.all([api("/api/suppliers"), api("/api/catalog/lite")]).then(([s, p]) => {
       setSuppliers(s);
@@ -74,9 +74,9 @@ export default function Purchasing() {
           >
             <t.icon className="h-4 w-4" />
             {t.label}
-            {t.key === "reorder" && reorder?.length > 0 && (
+            {t.key === "reorder" && reorder?.items?.length > 0 && (
               <span className="chip bg-amber-100 text-amber-700 dark:bg-amber-900/50 dark:text-amber-300">
-                {reorder.length}
+                {reorder.items.length}
               </span>
             )}
           </button>
@@ -94,7 +94,7 @@ export default function Purchasing() {
       )}
       {tab === "reorder" && (
         <ReorderTab
-          rows={reorder}
+          data={reorder}
           onOrder={(picks) => setBuilder({ prefill: picks })}
         />
       )}
@@ -204,34 +204,41 @@ function OrdersTab({ pos, onReceive, onReload }) {
   );
 }
 
-function ReorderTab({ rows, onOrder }) {
-  if (!rows) return <div className="flex h-32 items-center justify-center text-sage-400"><Loader2 className="h-5 w-5 animate-spin" /></div>;
+function ReorderTab({ data, onOrder }) {
+  if (!data) return <div className="flex h-32 items-center justify-center text-sage-400"><Loader2 className="h-5 w-5 animate-spin" /></div>;
+  const rows = data.items || [];
   if (rows.length === 0)
     return (
       <div className="card p-10 text-center">
         <PackageCheck className="mx-auto mb-3 h-10 w-10 text-brand-400" />
-        <p className="text-sage-500 dark:text-sage-400">Everything is above its reorder level. Nothing to restock.</p>
+        <p className="text-sage-500 dark:text-sage-400">Nothing to restock — stock levels cover demand for now.</p>
       </div>
     );
+  const daysChip = (d) => {
+    if (d == null) return <span className="text-sage-300">—</span>;
+    const tone = d <= 3 ? "bg-rose-100 text-rose-700 dark:bg-rose-900/40 dark:text-rose-300"
+      : d <= 7 ? "bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300"
+      : "bg-sage-100 text-sage-600 dark:bg-sage-800 dark:text-sage-300";
+    return <span className={`chip ${tone}`}>{d}d</span>;
+  };
   return (
     <div className="space-y-4">
-      <div className="flex justify-end">
-        <button
-          className="btn-primary"
-          onClick={() =>
-            onOrder(rows.map((r) => ({ product_id: r.id, name: r.name, unit: r.unit, qty_ordered: r.suggested_qty })))
-          }
-        >
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <p className="text-sm text-sage-500 dark:text-sage-400">
+          Forecast from the last <b>{data.window_days || 30} days</b> of sales · ordering to cover <b>{(data.lead_days ?? 7) + (data.buffer_days ?? 7)} days</b> (lead + buffer).
+        </p>
+        <button className="btn-primary" onClick={() => onOrder(rows.map((r) => ({ product_id: r.id, name: r.name, unit: r.unit, qty_ordered: r.suggested_qty })))}>
           <Truck className="h-4 w-4" /> Order all ({rows.length})
         </button>
       </div>
-      <div className="card overflow-hidden">
+      <div className="card overflow-x-auto">
         <table className="w-full text-sm">
           <thead>
             <tr className="border-b border-sage-200 text-left text-xs uppercase tracking-wide text-sage-400 dark:border-sage-800">
               <th className="px-5 py-3 font-medium">Product</th>
               <th className="px-5 py-3 font-medium text-right">In stock</th>
-              <th className="px-5 py-3 font-medium text-right">Reorder level</th>
+              <th className="px-5 py-3 font-medium text-right">Sells/day</th>
+              <th className="px-5 py-3 font-medium text-right">Runs out</th>
               <th className="px-5 py-3 font-medium text-right">Suggested</th>
               <th className="px-5 py-3 font-medium text-right"></th>
             </tr>
@@ -241,10 +248,11 @@ function ReorderTab({ rows, onOrder }) {
               <tr key={r.id} className="border-b border-sage-100 last:border-0 dark:border-sage-800/60">
                 <td className="px-5 py-3.5 font-medium text-sage-900 dark:text-sage-50">{r.name}</td>
                 <td className="px-5 py-3.5 text-right">
-                  <span className="font-semibold text-amber-600 dark:text-amber-400">{r.stock}</span>
+                  <span className={`font-semibold ${r.stock <= r.reorder_level ? "text-amber-600 dark:text-amber-400" : "text-sage-700 dark:text-sage-200"}`}>{r.stock}</span>
                   <span className="ml-1 text-xs text-sage-400">{r.unit}</span>
                 </td>
-                <td className="px-5 py-3.5 text-right text-sage-500">{r.reorder_level}</td>
+                <td className="px-5 py-3.5 text-right tabular-nums text-sage-600 dark:text-sage-300">{r.daily_rate || 0}</td>
+                <td className="px-5 py-3.5 text-right">{daysChip(r.days_left)}</td>
                 <td className="px-5 py-3.5 text-right font-semibold text-brand-700 dark:text-brand-400">{r.suggested_qty}</td>
                 <td className="px-5 py-3.5 text-right">
                   <button className="btn-outline !px-3 !py-1.5 text-xs" onClick={() => onOrder([{ product_id: r.id, name: r.name, unit: r.unit, qty_ordered: r.suggested_qty }])}>

@@ -21,23 +21,50 @@ exports.createSupplier = async (req, res) => {
 };
 
 // ── Reorder suggestions — products at/below reorder level ────
+// Velocity-based reorder: combine sales rate (units/day over a window) with
+// current stock to surface what's running out — including fast movers that are
+// still above their reorder level — and a suggested order qty covering the
+// supplier lead time + a safety buffer.
 exports.reorderSuggestions = async (req, res) => {
   const branchId = branchOf(req);
+  const windowDays = Math.min(Math.max(Number(req.query.window) || 30, 7), 180);
+  const leadDays = Math.max(Number(req.query.lead) || 7, 0);
+  const bufferDays = Math.max(Number(req.query.buffer) || 7, 0);
+  const cover = leadDays + bufferDays;
   try {
     const { rows } = await pool.query(
-      `SELECT p.id, p.name, p.unit, p.reorder_level,
-              COALESCE(SUM(b.quantity), 0)::int AS stock,
-              GREATEST(p.reorder_level * 2 - COALESCE(SUM(b.quantity), 0), p.reorder_level)::int AS suggested_qty
+      `WITH sold AS (
+         SELECT si.product_id, SUM(si.qty)::numeric AS units
+         FROM sale_items si JOIN sales s ON si.sale_id = s.id
+         WHERE s.created_at >= NOW() - ($2 || ' days')::interval
+           AND ($1::int IS NULL OR s.branch_id = $1)
+         GROUP BY si.product_id
+       )
+       SELECT p.id, p.name, p.unit, p.reorder_level,
+              COALESCE(SUM(b.quantity) FILTER (WHERE b.expiry_date IS NULL OR b.expiry_date >= CURRENT_DATE), 0)::int AS stock,
+              COALESCE(so.units, 0)::numeric AS sold_window
        FROM products p
-       LEFT JOIN product_batches b
-         ON b.product_id = p.id AND ($1::int IS NULL OR b.branch_id = $1)
+       LEFT JOIN product_batches b ON b.product_id = p.id AND ($1::int IS NULL OR b.branch_id = $1)
+       LEFT JOIN sold so ON so.product_id = p.id
        WHERE p.is_active = true
-       GROUP BY p.id
-       HAVING COALESCE(SUM(b.quantity), 0) <= p.reorder_level
-       ORDER BY (COALESCE(SUM(b.quantity), 0) - p.reorder_level), p.name`,
-      [branchId]
+       GROUP BY p.id, so.units`,
+      [branchId, String(windowDays)]
     );
-    res.json(rows);
+
+    const out = rows
+      .map((r) => {
+        const rate = Math.round((Number(r.sold_window) / windowDays) * 100) / 100; // units/day
+        const daysLeft = rate > 0 ? Math.round((r.stock / rate) * 10) / 10 : null;
+        let suggested = Math.max(0, Math.ceil(rate * cover) - r.stock);
+        if (r.stock <= r.reorder_level) suggested = Math.max(suggested, r.reorder_level * 2 - r.stock, 1);
+        return { id: r.id, name: r.name, unit: r.unit, reorder_level: r.reorder_level, stock: r.stock,
+                 sold_window: Number(r.sold_window), daily_rate: rate, days_left: daysLeft, suggested_qty: Math.max(0, suggested) };
+      })
+      // Needs ordering if below reorder level OR projected to run out within the cover window.
+      .filter((r) => r.suggested_qty > 0 && (r.stock <= r.reorder_level || (r.days_left !== null && r.days_left <= cover)))
+      .sort((a, b) => (a.days_left ?? 1e9) - (b.days_left ?? 1e9));
+
+    res.json({ window_days: windowDays, lead_days: leadDays, buffer_days: bufferDays, items: out });
   } catch (e) {
     res.status(500).json({ message: e.message });
   }
