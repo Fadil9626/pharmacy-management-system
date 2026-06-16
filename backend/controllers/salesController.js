@@ -4,6 +4,7 @@ const { effectiveBranch, moduleOn } = require("../lib/context");
 const { userCan } = require("../lib/permissions");
 const { logAudit } = require("../lib/audit");
 const { openShiftId } = require("./financeController");
+const { evaluate: evaluatePromotions } = require("../lib/promotions");
 
 const branchOf = effectiveBranch;
 
@@ -136,9 +137,12 @@ exports.createSale = async (req, res) => {
       }
     }
 
-    const disc = Math.max(0, Number(discount) || 0);
-    if (disc > 0 && !(await userCan(req.user.role, "pos.discount")))
+    const manualDisc = Math.max(0, Number(discount) || 0);
+    if (manualDisc > 0 && !(await userCan(req.user.role, "pos.discount")))
       throw new Error("You don't have permission to apply discounts");
+    // Auto-applied promotions (server-authoritative — recomputed, never trusted from the client).
+    const promo = await evaluatePromotions(client, lines);
+    const disc = Math.min(subtotal, manualDisc + promo.discount);
     const taxable = Math.max(0, subtotal - disc);
     const tax = Math.round(taxable * (taxPct / 100) * 100) / 100;
     const total = taxable + tax;
@@ -225,6 +229,10 @@ exports.createSale = async (req, res) => {
     for (const p of payments) {
       await client.query("INSERT INTO sale_payments (sale_id, method, amount) VALUES ($1,$2,$3)", [saleId, p.method, p.amount]);
     }
+    // Record which promotions applied (for receipts + reporting).
+    for (const ap of promo.applied) {
+      await client.query("INSERT INTO sale_promotions (sale_id, promotion_id, name, amount) VALUES ($1,$2,$3,$4)", [saleId, ap.promotion_id, ap.name, ap.amount]);
+    }
 
     // Accrue customer stats — the on-account portion adds to balance; all linked
     // sales build spend, visits and loyalty points.
@@ -249,6 +257,8 @@ exports.createSale = async (req, res) => {
       receipt_no: receiptNo,
       subtotal,
       discount: disc,
+      promo_discount: promo.discount,
+      promotions: promo.applied,
       tax,
       total,
       payment_method: effectiveMethod,

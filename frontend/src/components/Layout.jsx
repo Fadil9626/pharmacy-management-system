@@ -9,7 +9,7 @@ import {
   Pill, Plus, LayoutDashboard, Boxes, ShoppingCart, Receipt, Truck, FileText,
   Users, ClipboardList, ShieldAlert, Wallet, GitBranch, Moon, Sun,
   LogOut, Menu, X, Settings as SettingsIcon, UserCog, TrendingUp, PanelLeft,
-  ShieldCheck, ChevronDown,
+  ShieldCheck, ChevronDown, Tag,
 } from "lucide-react";
 
 // nav item → required module key (null = always visible). "soon" items render disabled.
@@ -19,6 +19,7 @@ const NAV = [
   { to: "/inventory", label: "Inventory", icon: Boxes, module: "inventory", roles: ["owner", "manager", "pharmacist"] },
   { to: "/pos", label: "Point of Sale", icon: ShoppingCart, module: "pos" },
   { to: "/sales", label: "Sales", icon: Receipt, module: "pos" },
+  { to: "/promotions", label: "Promotions", icon: Tag, module: "pos", roles: ["owner", "manager"] },
   { to: "/purchasing", label: "Purchasing", icon: Truck, module: "purchasing", roles: ["owner", "manager", "pharmacist"] },
   { to: "/pricing", label: "Market Pricing", icon: TrendingUp, module: "market_pricing", roles: ["owner", "manager"] },
   { to: "/prescriptions", label: "Prescriptions", icon: ClipboardList, module: "prescriptions", roles: ["owner", "manager", "pharmacist"] },

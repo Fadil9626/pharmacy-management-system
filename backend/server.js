@@ -34,6 +34,7 @@ const purchasing = require("./controllers/purchasingController");
 const reports = require("./controllers/reportsController");
 const publicHealth = require("./controllers/publicHealthController");
 const notifications = require("./controllers/notificationsController");
+const promotions = require("./controllers/promotionsController");
 
 const app = express();
 app.use(cors());
@@ -162,6 +163,13 @@ app.post("/api/branches", protect, requireModule("branches"), requirePermission(
 app.patch("/api/branches/:id", protect, requireModule("branches"), requirePermission("branches.manage"), branches.update);
 app.get("/api/transfers", protect, requireModule("branches"), transfers.list);
 app.post("/api/transfers", protect, requireModule("branches"), requirePermission("inventory.adjust"), transfers.create);
+
+// Promotions / discounts (managed by owner/manager; previewed at the till)
+app.get("/api/promotions", protect, authorize("owner", "manager"), promotions.list);
+app.post("/api/promotions", protect, authorize("owner", "manager"), promotions.create);
+app.patch("/api/promotions/:id", protect, authorize("owner", "manager"), promotions.update);
+app.delete("/api/promotions/:id", protect, authorize("owner", "manager"), promotions.remove);
+app.post("/api/promotions/preview", protect, requireModule("pos"), promotions.preview);
 
 // Finance — till shifts, cash movements, expenses (licensable module)
 app.get("/api/finance/shift/current", protect, requireModule("finance"), finance.current);

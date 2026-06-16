@@ -9,7 +9,7 @@ import ProductImage from "../components/ProductImage.jsx";
 import {
   Search, Plus, Minus, Trash2, ShoppingCart, Loader2, CheckCircle2, X,
   ShieldAlert, Banknote, CreditCard, Smartphone, ScanLine, HandCoins, Wallet, Lock,
-  PauseCircle, Clock3, PlayCircle, Wifi, WifiOff, RefreshCw, CloudOff, Maximize2, Minimize2,
+  PauseCircle, Clock3, PlayCircle, Wifi, WifiOff, RefreshCw, CloudOff, Maximize2, Minimize2, Tag,
 } from "lucide-react";
 
 const uuid = () =>
@@ -56,6 +56,7 @@ export default function POS() {
   const [syncing, setSyncing] = useState(false);
   const [syncMsg, setSyncMsg] = useState("");
   const [isFs, setIsFs] = useState(false);
+  const [promo, setPromo] = useState({ discount: 0, applied: [] });
   const searchRef = useRef(null);
   const posRef = useRef(null);
 
@@ -69,6 +70,18 @@ export default function POS() {
     if (document.fullscreenElement) document.exitFullscreen?.();
     else posRef.current?.requestFullscreen?.().catch(() => {});
   };
+
+  // Live promotion preview — auto-applied discounts for the current cart.
+  useEffect(() => {
+    if (!cart.length || !navigator.onLine) { setPromo({ discount: 0, applied: [] }); return; }
+    const items = cart.map((c) => ({ product_id: c.id, qty: c.qty, unit_price: c.price }));
+    const id = setTimeout(() => {
+      api("/api/promotions/preview", { method: "POST", body: { items } })
+        .then((r) => setPromo(r || { discount: 0, applied: [] }))
+        .catch(() => setPromo({ discount: 0, applied: [] }));
+    }, 250);
+    return () => clearTimeout(id);
+  }, [cart]);
 
   const loadParked = () => api("/api/pos/parked").then((r) => setParkedCount(r.length)).catch(() => {});
 
@@ -229,7 +242,9 @@ export default function POS() {
 
   const taxPct = Number(settings?.tax_percent || 0);
   const subtotal = cart.reduce((s, c) => s + c.qty * c.price, 0);
-  const disc = Math.max(0, Math.min(Number(discount) || 0, subtotal));
+  const manualDisc = Math.max(0, Math.min(Number(discount) || 0, subtotal));
+  const promoDiscount = Math.min(promo.discount || 0, Math.max(0, subtotal - manualDisc));
+  const disc = manualDisc + promoDiscount; // shown discount = manual + auto promotions
   const taxable = subtotal - disc;
   const tax = Math.round(taxable * (taxPct / 100) * 100) / 100;
   const total = taxable + tax;
@@ -593,9 +608,14 @@ export default function POS() {
             <div className="flex justify-between text-sage-500 dark:text-sage-400">
               <span>Subtotal</span><span>{money(subtotal)}</span>
             </div>
-            {disc > 0 && (
+            {(promo.applied || []).map((a, i) => (
+              <div key={i} className="flex justify-between text-brand-600 dark:text-brand-400">
+                <span className="flex items-center gap-1"><Tag className="h-3 w-3" /> {a.name}</span><span>−{money(a.amount)}</span>
+              </div>
+            ))}
+            {manualDisc > 0 && (
               <div className="flex justify-between text-sage-500 dark:text-sage-400">
-                <span>Discount</span><span>−{money(disc)}</span>
+                <span>Discount</span><span>−{money(manualDisc)}</span>
               </div>
             )}
             {tax > 0 && (

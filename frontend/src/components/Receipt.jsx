@@ -69,7 +69,12 @@ export default function ReceiptModal({ receipt, cashier, branch, settings, onClo
 
           <div className="space-y-1">
             <Row label="Subtotal" value={money(receipt.subtotal)} muted />
-            {receipt.discount > 0 && <Row label="Discount" value={`−${money(receipt.discount)}`} muted />}
+            {(receipt.promotions || []).map((p, i) => (
+              <Row key={i} label={p.name} value={`−${money(p.amount)}`} muted />
+            ))}
+            {(receipt.discount - (receipt.promo_discount || 0)) > 0 && (
+              <Row label="Discount" value={`−${money(receipt.discount - (receipt.promo_discount || 0))}`} muted />
+            )}
             {receipt.tax > 0 && <Row label={`Tax${taxPct ? ` (${taxPct}%)` : ""}`} value={money(receipt.tax)} muted />}
             <Row label="Total" value={money(receipt.total)} bold />
             {receipt.amount_paid != null && <Row label="Paid" value={money(receipt.amount_paid)} muted />}

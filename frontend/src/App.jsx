@@ -27,6 +27,7 @@ const Branches = lazyWithRetry(() => import("./pages/Branches.jsx"));
 const Staff = lazyWithRetry(() => import("./pages/Staff.jsx"));
 const Settings = lazyWithRetry(() => import("./pages/Settings.jsx"));
 const Profile = lazyWithRetry(() => import("./pages/Profile.jsx"));
+const Promotions = lazyWithRetry(() => import("./pages/Promotions.jsx"));
 
 // Route table: each page declares the module it needs and the roles allowed.
 // The single source of truth the sidebar nav mirrors.
@@ -36,6 +37,7 @@ const ROUTES = [
   { path: "inventory", el: <Inventory />, module: "inventory", roles: STAFF },
   { path: "pos", el: <POS />, module: "pos" },              // cashiers' core screen — open to all roles
   { path: "sales", el: <Sales />, module: "pos" },          // reprint receipts — open to all roles
+  { path: "promotions", el: <Promotions />, module: "pos", roles: ["owner", "manager"] },
   { path: "customers", el: <Customers />, module: "customers", roles: STAFF },
   { path: "prescriptions", el: <Prescriptions />, module: "prescriptions", roles: STAFF },
   { path: "controlled", el: <Controlled />, module: "controlled_drugs", roles: STAFF },
