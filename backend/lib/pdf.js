@@ -106,7 +106,7 @@ function statement(res, { data, settings }) {
 
   letterhead(doc, settings, "STATEMENT", [
     c.name, c.phone || "",
-    `Period: ${data.from || "beginning"} → ${data.to || "today"}`,
+    `Period: ${data.from || "beginning"} to ${data.to || "today"}`,
   ].filter(Boolean));
 
   // Summary
