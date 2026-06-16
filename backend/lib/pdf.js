@@ -11,9 +11,15 @@ function start(res, filename) {
 }
 
 function letterhead(doc, settings, title, meta = []) {
-  doc.fillColor("#15803d").font("Helvetica-Bold").fontSize(20).text(settings.pharmacy_name || "Remedy Pharmacy", L, 50);
+  // Pharmacy logo (stored as a data URL in settings) — drawn top-left if present.
+  let tx = L;
+  const logoMatch = settings.logo && /^data:image\/(png|jpe?g);base64,(.+)$/s.exec(settings.logo);
+  if (logoMatch) {
+    try { doc.image(Buffer.from(logoMatch[2], "base64"), L, 47, { fit: [46, 46] }); tx = L + 56; } catch (_) {}
+  }
+  doc.fillColor("#15803d").font("Helvetica-Bold").fontSize(20).text(settings.pharmacy_name || "Remedy Pharmacy", tx, 50);
   doc.font("Helvetica").fillColor("#555").fontSize(9);
-  [settings.address, settings.phone, settings.email].filter(Boolean).forEach((l) => doc.text(l));
+  [settings.address, settings.phone, settings.email].filter(Boolean).forEach((l) => doc.text(l, tx));
   doc.fillColor("#111").font("Helvetica-Bold").fontSize(16).text(title, L, 50, { align: "right", width: R - L });
   doc.font("Helvetica").fillColor("#555").fontSize(9);
   meta.forEach((m) => doc.text(m, L, doc.y, { align: "right", width: R - L }));
