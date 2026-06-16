@@ -150,6 +150,7 @@ app.put("/api/permissions/:role", protect, authorize("owner"), permissions.updat
 app.get("/api/customers", protect, requireModule("customers"), customers.list);
 app.get("/api/customers/:id", protect, requireModule("customers"), customers.get);
 app.get("/api/customers/:id/statement", protect, requireModule("customers"), customers.statement);
+app.get("/api/customers/:id/statement.pdf", protect, requireModule("customers"), customers.statementPDF);
 app.post("/api/customers/:id/statement/send", protect, requireModule("customers"), requirePermission("customers.payment"), customers.notifyStatement);
 app.post("/api/customers", protect, requireModule("customers"), requirePermission("customers.manage"), customers.create);
 app.patch("/api/customers/:id", protect, requireModule("customers"), requirePermission("customers.manage"), customers.update);
@@ -211,6 +212,7 @@ app.get("/api/pos/products", protect, requireModule("pos"), sales.sellableProduc
 app.post("/api/sales", protect, requireModule("pos"), requirePermission("pos.sell"), sales.createSale);
 app.get("/api/sales", protect, requireModule("pos"), sales.listSales);
 app.get("/api/sales/:id", protect, requireModule("pos"), sales.getSale);
+app.get("/api/sales/:id/invoice.pdf", protect, requireModule("pos"), sales.salePDF);
 app.post("/api/sales/:id/return", protect, requireModule("pos"), requirePermission("pos.refund"), sales.createReturn);
 app.get("/api/returns", protect, requireModule("pos"), sales.listReturns);
 // Held / parked sales

@@ -15,6 +15,26 @@ export const setActiveBranch = (id) => {
   else localStorage.removeItem(BRANCH_KEY);
 };
 
+// Download an authenticated file (PDF, etc.) — fetches with the JWT, then saves
+// the blob (a plain <a href> can't send the auth header).
+export async function downloadFile(path, filename) {
+  const headers = {};
+  const token = getToken();
+  if (token) headers.Authorization = `Bearer ${token}`;
+  if (activeBranch) headers["X-Branch-Id"] = activeBranch;
+  const res = await fetch(path, { headers });
+  if (!res.ok) throw new Error(`Download failed (${res.status})`);
+  const blob = await res.blob();
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename || path.split("/").pop();
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
 export async function api(path, { method = "GET", body, params } = {}) {
   const url = new URL(path, window.location.origin);
   if (params) {

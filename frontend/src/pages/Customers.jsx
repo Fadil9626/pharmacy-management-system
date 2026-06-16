@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { api } from "../lib/api.js";
 import { money, num } from "../lib/money.js";
 import { downloadCSV } from "../lib/csv.js";
+import { downloadFile } from "../lib/api.js";
 import {
   Users, Plus, Search, Loader2, X, Phone, Mail, Wallet, Star,
   ArrowLeft, HandCoins, Receipt, CreditCard, FileText, Printer, Download, Send, Check, AlertTriangle,
@@ -371,6 +372,7 @@ function StatementModal({ customer, onClose }) {
           <button className="btn-outline" onClick={run} disabled={busy}>{busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Search className="h-4 w-4" />} Apply</button>
           <div className="flex-1" />
           <button className="btn-outline" onClick={exportCsv} disabled={!data?.lines?.length}><Download className="h-4 w-4" /> CSV</button>
+          <button className="btn-outline" onClick={() => { const qs = new URLSearchParams(); if (from) qs.set("from", from); if (to) qs.set("to", to); downloadFile(`/api/customers/${customer.id}/statement.pdf?${qs}`, `statement-${customer.name}.pdf`).catch((e) => setErr(e.message)); }}><FileText className="h-4 w-4" /> PDF</button>
           {customer.email && <button className="btn-outline" onClick={() => sendStatement("email")} disabled={sending} title={`Email to ${customer.email}`}><Mail className="h-4 w-4" /> Email</button>}
           {customer.phone && <button className="btn-outline" onClick={() => sendStatement("sms")} disabled={sending} title={`SMS to ${customer.phone}`}><Send className="h-4 w-4" /> SMS</button>}
           <button className="btn-primary" onClick={print} disabled={!data}><Printer className="h-4 w-4" /> Print</button>

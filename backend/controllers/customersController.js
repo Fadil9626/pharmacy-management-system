@@ -1,5 +1,6 @@
 const pool = require("../config/db");
 const { notify } = require("../lib/notify");
+const pdf = require("../lib/pdf");
 
 // Email/SMS a statement summary to a customer on demand.
 exports.notifyStatement = async (req, res) => {
@@ -123,6 +124,43 @@ exports.update = async (req, res) => {
 // Account statement: a running ledger of on-account charges and repayments over
 // a date range, reconstructed from transactions (opening balance = net activity
 // before `from`). Used for the printable/exportable customer statement.
+async function buildStatement(id, fromQ, toQ) {
+  const from = fromQ ? `${fromQ} 00:00:00` : "1970-01-01";
+  const to = toQ ? `${toQ} 23:59:59` : "2999-12-31";
+  const c = await pool.query("SELECT id, name, phone, email, address, balance, credit_limit FROM customers WHERE id = $1", [id]);
+  if (!c.rows.length) return null;
+  const charges = await pool.query(
+    `SELECT s.id, s.receipt_no, s.created_at, SUM(sp.amount)::numeric AS amount
+     FROM sales s JOIN sale_payments sp ON sp.sale_id = s.id AND sp.method = 'account'
+     WHERE s.customer_id = $1 GROUP BY s.id, s.receipt_no, s.created_at`, [id]);
+  const pays = await pool.query(
+    `SELECT cp.id, cp.created_at, cp.amount, cp.method, cp.note FROM customer_payments cp WHERE cp.customer_id = $1`, [id]);
+  const events = [
+    ...charges.rows.map((r) => ({ at: new Date(r.created_at), type: "charge", ref: r.receipt_no, amount: Number(r.amount), label: "On-account sale" })),
+    ...pays.rows.map((r) => ({ at: new Date(r.created_at), type: "payment", ref: null, amount: Number(r.amount), label: `Payment (${r.method})${r.note ? " — " + r.note : ""}` })),
+  ].sort((a, b) => a.at - b.at);
+  const fromTs = new Date(from), toTs = new Date(to);
+  let opening = 0;
+  for (const e of events) if (e.at < fromTs) opening += e.type === "charge" ? e.amount : -e.amount;
+  let running = opening;
+  const lines = [];
+  for (const e of events) {
+    if (e.at < fromTs || e.at > toTs) continue;
+    running += e.type === "charge" ? e.amount : -e.amount;
+    lines.push({ date: e.at, type: e.type, ref: e.ref, label: e.label,
+      charge: e.type === "charge" ? e.amount : 0, payment: e.type === "payment" ? e.amount : 0,
+      balance: Math.round(running * 100) / 100 });
+  }
+  return {
+    customer: c.rows[0], from: fromQ || null, to: toQ || null,
+    opening_balance: Math.round(opening * 100) / 100,
+    closing_balance: Math.round(running * 100) / 100,
+    total_charges: Math.round(lines.reduce((s, l) => s + l.charge, 0) * 100) / 100,
+    total_payments: Math.round(lines.reduce((s, l) => s + l.payment, 0) * 100) / 100,
+    current_balance: Number(c.rows[0].balance), lines,
+  };
+}
+
 exports.statement = async (req, res) => {
   const id = Number(req.params.id);
   const from = req.query.from ? `${req.query.from} 00:00:00` : "1970-01-01";
@@ -179,6 +217,18 @@ exports.statement = async (req, res) => {
       current_balance: Number(c.rows[0].balance),
       lines,
     });
+  } catch (e) {
+    res.status(500).json({ message: e.message });
+  }
+};
+
+// Downloadable PDF statement.
+exports.statementPDF = async (req, res) => {
+  try {
+    const data = await buildStatement(Number(req.params.id), req.query.from, req.query.to);
+    if (!data) return res.status(404).json({ message: "Customer not found" });
+    const settings = (await pool.query("SELECT * FROM settings WHERE id = 1")).rows[0] || {};
+    pdf.statement(res, { data, settings });
   } catch (e) {
     res.status(500).json({ message: e.message });
   }

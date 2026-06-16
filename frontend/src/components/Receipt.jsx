@@ -1,6 +1,7 @@
 import { useState } from "react";
-import { CheckCircle2, X, Printer, Usb } from "lucide-react";
+import { CheckCircle2, X, Printer, Usb, FileDown } from "lucide-react";
 import { money } from "../lib/money.js";
+import { downloadFile } from "../lib/api.js";
 import { printReceipt } from "../lib/printing.js";
 import { usbSupported, printReceiptUSB } from "../lib/escpos.js";
 
@@ -95,6 +96,12 @@ export default function ReceiptModal({ receipt, cashier, branch, settings, onClo
           <button onClick={doPrint} className="btn-outline flex-1">
             <Printer className="h-4 w-4" /> Print
           </button>
+          {receipt.id && !receipt.offline && (
+            <button onClick={() => downloadFile(`/api/sales/${receipt.id}/invoice.pdf`, `${receipt.receipt_no || "invoice"}.pdf`).catch((e) => setUsbErr(e.message))}
+              className="btn-outline !px-3" title="Download PDF invoice">
+              <FileDown className="h-4 w-4" />
+            </button>
+          )}
           {usbSupported() && (
             <button onClick={doUsb} className="btn-outline !px-3" title="Print direct to a USB thermal printer (ESC/POS)">
               <Usb className="h-4 w-4" />

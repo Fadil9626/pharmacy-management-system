@@ -5,8 +5,26 @@ const { userCan } = require("../lib/permissions");
 const { logAudit } = require("../lib/audit");
 const { openShiftId } = require("./financeController");
 const { evaluate: evaluatePromotions } = require("../lib/promotions");
+const pdf = require("../lib/pdf");
 
 const branchOf = effectiveBranch;
+
+// Downloadable PDF invoice for a sale.
+exports.salePDF = async (req, res) => {
+  const id = Number(req.params.id);
+  try {
+    const sale = (await pool.query("SELECT * FROM sales WHERE id = $1", [id])).rows[0];
+    if (!sale) return res.status(404).json({ message: "Sale not found" });
+    const items = (await pool.query("SELECT name, qty, unit_price, line_total FROM sale_items WHERE sale_id = $1", [id])).rows;
+    const payments = (await pool.query("SELECT method, amount FROM sale_payments WHERE sale_id = $1", [id])).rows;
+    const promotions = (await pool.query("SELECT name, amount FROM sale_promotions WHERE sale_id = $1", [id])).rows;
+    const settings = (await pool.query("SELECT * FROM settings WHERE id = 1")).rows[0] || {};
+    sale.promo_discount = promotions.reduce((s, p) => s + Number(p.amount), 0);
+    pdf.invoice(res, { sale, items, payments, promotions, settings });
+  } catch (e) {
+    res.status(500).json({ message: e.message });
+  }
+};
 
 // Sellable catalogue for the till — independent of the inventory module so POS
 // can run on its own. Returns current stock + the effective (live) price per
