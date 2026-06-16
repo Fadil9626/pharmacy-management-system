@@ -75,7 +75,13 @@ exports.verify2fa = async (req, res) => {
     if (!user || !user.is_active) return res.status(401).json({ message: "Account unavailable" });
 
     const clean = String(code).trim().toUpperCase();
-    if (totp.verify(user.totp_secret, clean)) {
+    const step = totp.matchStep(user.totp_secret, clean);
+    if (step !== null) {
+      // Replay protection: a code from an already-used (or earlier) step is refused.
+      if (step <= (user.totp_last_step || 0)) {
+        return res.status(401).json({ message: "That code was already used — wait for the next one" });
+      }
+      await pool.query("UPDATE users SET totp_last_step = $1 WHERE id = $2", [step, user.id]);
       return await issueSession(user, res);
     }
     // Backup code (one-time use)

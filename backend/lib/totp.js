@@ -38,16 +38,19 @@ function hotp(secret, counter) {
   return String(code % 1e6).padStart(6, "0");
 }
 
-// Verify a code against the current 30s window ± `window` steps (clock drift).
-function verify(secret, token, window = 1) {
-  if (!secret || !/^\d{6}$/.test(String(token || "").trim())) return false;
+// Return the time-step a code matches (for replay protection), or null.
+function matchStep(secret, token, window = 1) {
+  if (!secret || !/^\d{6}$/.test(String(token || "").trim())) return null;
   const t = Math.floor(Date.now() / 1000 / 30);
   const code = String(token).trim();
   for (let i = -window; i <= window; i++) {
-    if (hotp(secret, t + i) === code) return true;
+    if (hotp(secret, t + i) === code) return t + i;
   }
-  return false;
+  return null;
 }
+
+// Verify a code against the current 30s window ± `window` steps (clock drift).
+const verify = (secret, token, window = 1) => matchStep(secret, token, window) !== null;
 
 // Current 30s TOTP code for a secret (used by tests / self-checks).
 const current = (secret) => hotp(secret, Math.floor(Date.now() / 1000 / 30));
@@ -65,4 +68,4 @@ function makeBackupCodes(n = 10) {
   return codes;
 }
 
-module.exports = { generateSecret, verify, current, otpauthURL, makeBackupCodes, hashCode };
+module.exports = { generateSecret, verify, matchStep, current, otpauthURL, makeBackupCodes, hashCode };

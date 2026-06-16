@@ -24,6 +24,16 @@ test("verify rejects malformed input", () => {
   assert.equal(totp.verify("", "123456"), false);
 });
 
+test("matchStep returns a step for a valid code (used for replay protection)", () => {
+  const s = totp.generateSecret();
+  const step = totp.matchStep(s, totp.current(s));
+  assert.equal(typeof step, "number");
+  // The same code resolves to the same step — so a server tracking last-used
+  // step will reject the second use.
+  assert.equal(totp.matchStep(s, totp.current(s)), step);
+  assert.equal(totp.matchStep(s, "000000") === step, false);
+});
+
 test("backup codes are unique and hashing is stable", () => {
   const codes = totp.makeBackupCodes(10);
   assert.equal(codes.length, 10);
