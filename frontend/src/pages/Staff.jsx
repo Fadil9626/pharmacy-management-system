@@ -3,7 +3,7 @@ import { api } from "../lib/api.js";
 import { useAuth } from "../context/AuthContext.jsx";
 import {
   Users, Plus, X, Loader2, KeyRound, ShieldCheck, UserCog, CheckCircle2, Ban,
-  Shield, Save, Lock, ScrollText, Search,
+  Shield, Save, Lock, ScrollText, Search, ShieldAlert, FileCheck2,
 } from "lucide-react";
 
 const ROLES = ["owner", "manager", "pharmacist", "cashier"];
@@ -140,6 +140,14 @@ function AuditLog() {
   const [offset, setOffset] = useState(0);
   const [more, setMore] = useState(false);
   const [err, setErr] = useState("");
+  const [integrity, setIntegrity] = useState(null);
+  const [checking, setChecking] = useState(false);
+
+  const verify = async () => {
+    setChecking(true);
+    try { setIntegrity(await api("/api/audit/verify")); }
+    catch (e) { setErr(e.message); } finally { setChecking(false); }
+  };
 
   const fetchPage = (off, append) => {
     api("/api/audit", { params: { limit: 50, offset: off, action, q } })
@@ -164,7 +172,22 @@ function AuditLog() {
           <option value="">All actions</option>
           {data.actions.map((a) => <option key={a} value={a}>{ACTION_LABEL[a] || a}</option>)}
         </select>
+        <button type="button" className="btn-outline" onClick={verify} disabled={checking} title="Check the log hasn't been altered">
+          {checking ? <Loader2 className="h-4 w-4 animate-spin" /> : <FileCheck2 className="h-4 w-4" />} Verify integrity
+        </button>
       </div>
+
+      {integrity && (
+        integrity.ok ? (
+          <div className="flex items-center gap-2 rounded-xl border border-brand-200 bg-brand-50 px-3 py-2 text-sm font-medium text-brand-700 dark:border-brand-900/50 dark:bg-brand-900/20 dark:text-brand-300">
+            <ShieldCheck className="h-4 w-4" /> Tamper-evident chain intact — all {integrity.entries} entries verified.
+          </div>
+        ) : (
+          <div className="flex items-center gap-2 rounded-xl border border-rose-300 bg-rose-50 px-3 py-2 text-sm font-medium text-rose-700 dark:border-rose-900/50 dark:bg-rose-950/30 dark:text-rose-300">
+            <ShieldAlert className="h-4 w-4" /> Tampering detected at entry #{integrity.broken_at} ({integrity.reason}). The log was altered outside the app.
+          </div>
+        )
+      )}
 
       <div className="card overflow-hidden">
         <div className="overflow-x-auto">

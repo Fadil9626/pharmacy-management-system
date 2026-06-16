@@ -1,4 +1,14 @@
 const pool = require("../config/db");
+const { verifyAuditChain } = require("../lib/audit");
+
+// Confirm the audit log hasn't been tampered with (hash chain intact).
+exports.verify = async (_req, res) => {
+  try {
+    res.json(await verifyAuditChain());
+  } catch (e) {
+    res.status(500).json({ message: e.message });
+  }
+};
 
 exports.list = async (req, res) => {
   const limit = Math.min(Number(req.query.limit) || 100, 500);

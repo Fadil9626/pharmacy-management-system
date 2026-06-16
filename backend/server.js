@@ -80,6 +80,8 @@ if (!process.env.JWT_SECRET) {
       console.log("✅ Seeded admin — email: admin@remedy.local  password: admin123");
     }
     if (await seedIfEmpty()) console.log("✅ Seeded default role permissions");
+    const chained = await require("./lib/audit").backfillAuditChain();
+    if (chained) console.log(`✅ Audit chain established for ${chained} existing entries`);
     await backfillPermission("pos.refund", ["manager", "pharmacist"]);
     console.log("✅ Remedy database ready");
   } catch (e) {
@@ -131,6 +133,7 @@ app.put("/api/settings", protect, requirePermission("settings.manage"), settings
 
 // Audit log (owner/manager)
 app.get("/api/audit", protect, authorize("owner", "manager"), audit.list);
+app.get("/api/audit/verify", protect, authorize("owner", "manager"), audit.verify);
 
 // Notifications — outbox, channel config, test, and the alert scan
 app.get("/api/notifications", protect, authorize("owner", "manager"), notifications.list);
