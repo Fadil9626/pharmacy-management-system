@@ -295,14 +295,19 @@ function NotificationsTab({ isOwner }) {
     setBusy(true); setErr(""); setSaved(false);
     try {
       const body = {
-        email: { enabled: cfg.email.enabled, api_url: cfg.email.api_url, from: cfg.email.from, ...(cfg.email.api_key ? { api_key: cfg.email.api_key } : {}) },
+        email: {
+          enabled: cfg.email.enabled, api_url: cfg.email.api_url, from: cfg.email.from,
+          smtp_host: cfg.email.smtp_host, smtp_port: cfg.email.smtp_port, smtp_user: cfg.email.smtp_user, smtp_secure: cfg.email.smtp_secure,
+          ...(cfg.email.api_key ? { api_key: cfg.email.api_key } : {}),
+          ...(cfg.email.smtp_pass ? { smtp_pass: cfg.email.smtp_pass } : {}),
+        },
         sms: { enabled: cfg.sms.enabled, api_url: cfg.sms.api_url, sender: cfg.sms.sender, ...(cfg.sms.api_key ? { api_key: cfg.sms.api_key } : {}) },
         events: cfg.events,
         recipients: { emails: splitList(emailsText), phones: splitList(phonesText) },
         dedupe_hours: Number(cfg.dedupe_hours) || 0,
       };
       const c = await api("/api/notifications/config", { method: "PUT", body });
-      setCfg({ ...c, email: { ...c.email, api_key: "" }, sms: { ...c.sms, api_key: "" } });
+      setCfg({ ...c, email: { ...c.email, api_key: "", smtp_pass: "" }, sms: { ...c.sms, api_key: "" } });
       setSaved(true); setTimeout(() => setSaved(false), 2500);
     } catch (e) { setErr(e.message); } finally { setBusy(false); }
   };
