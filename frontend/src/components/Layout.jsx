@@ -9,7 +9,7 @@ import {
   Pill, Plus, LayoutDashboard, Boxes, ShoppingCart, Receipt, Truck, FileText,
   Users, ClipboardList, ShieldAlert, Wallet, GitBranch, Moon, Sun,
   LogOut, Menu, X, Settings as SettingsIcon, UserCog, TrendingUp, PanelLeft,
-  ShieldCheck, Power, ChevronDown,
+  ShieldCheck, ChevronDown,
 } from "lucide-react";
 
 // nav item → required module key (null = always visible). "soon" items render disabled.
@@ -89,12 +89,6 @@ export default function Layout() {
   const toggleCollapsed = () =>
     setCollapsed((c) => { const v = !c; localStorage.setItem("remedy-sidebar", v ? "1" : "0"); return v; });
   const [userMenu, setUserMenu] = useState(false);
-
-  const logoutAllDevices = async () => {
-    try { await api("/api/auth/logout-all", { method: "POST" }); } catch (_) {}
-    logout();
-    navigate("/login", { replace: true });
-  };
 
   const items = NAV.filter(
     (n) =>
@@ -207,10 +201,6 @@ export default function Layout() {
                   <button onClick={() => { setUserMenu(false); navigate("/profile"); }}
                     className="flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-left text-sm text-sage-700 transition hover:bg-sage-100 dark:text-sage-200 dark:hover:bg-sage-800">
                     <ShieldCheck className="h-4 w-4 text-brand-600" /> My account &amp; security
-                  </button>
-                  <button onClick={() => { setUserMenu(false); logoutAllDevices(); }}
-                    className="flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-left text-sm text-sage-700 transition hover:bg-sage-100 dark:text-sage-200 dark:hover:bg-sage-800">
-                    <Power className="h-4 w-4 text-sage-400" /> Log out all devices
                   </button>
                   <div className="my-1 border-t border-sage-100 dark:border-sage-800" />
                   <button onClick={() => { setUserMenu(false); doLogout(); }}
