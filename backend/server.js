@@ -35,6 +35,7 @@ const reports = require("./controllers/reportsController");
 const publicHealth = require("./controllers/publicHealthController");
 const notifications = require("./controllers/notificationsController");
 const promotions = require("./controllers/promotionsController");
+const clinical = require("./controllers/clinicalController");
 
 const app = express();
 app.use(cors());
@@ -170,6 +171,12 @@ app.post("/api/promotions", protect, authorize("owner", "manager"), promotions.c
 app.patch("/api/promotions/:id", protect, authorize("owner", "manager"), promotions.update);
 app.delete("/api/promotions/:id", protect, authorize("owner", "manager"), promotions.remove);
 app.post("/api/promotions/preview", protect, requireModule("pos"), promotions.preview);
+
+// Clinical safety — allergy + drug-interaction checks
+app.post("/api/clinical/check", protect, clinical.check);
+app.get("/api/clinical/interactions", protect, authorize("owner", "manager"), clinical.listInteractions);
+app.post("/api/clinical/interactions", protect, authorize("owner", "manager"), clinical.addInteraction);
+app.delete("/api/clinical/interactions/:id", protect, authorize("owner", "manager"), clinical.removeInteraction);
 
 // Finance — till shifts, cash movements, expenses (licensable module)
 app.get("/api/finance/shift/current", protect, requireModule("finance"), finance.current);

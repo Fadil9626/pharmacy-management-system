@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { api } from "../lib/api.js";
 import { useAuth } from "../context/AuthContext.jsx";
 import { printLabels, baseWarnings } from "../lib/printing.js";
+import ClinicalWarnings from "../components/ClinicalWarnings.jsx";
 import {
   ClipboardList, Plus, Search, Loader2, X, Trash2, ArrowLeft,
   Stethoscope, User, CheckCircle2, Ban, Pill, RefreshCw, Tag,
@@ -183,6 +184,7 @@ function RxDetail({ id, onBack }) {
   const [rx, setRx] = useState(null);
   const [err, setErr] = useState("");
   const [busy, setBusy] = useState(false);
+  const [clinical, setClinical] = useState(null);
   const load = () => api(`/api/prescriptions/${id}`).then(setRx).catch((e) => setErr(e.message));
 
   const printRxLabels = () => {
@@ -200,6 +202,12 @@ function RxDetail({ id, onBack }) {
     }, settings);
   };
   useEffect(() => { load(); }, [id]);
+  useEffect(() => {
+    const items = (rx?.items || []).filter((it) => it.product_id).map((it) => ({ product_id: it.product_id }));
+    if (!items.length && !rx?.customer_id) { setClinical(null); return; }
+    api("/api/clinical/check", { method: "POST", body: { items, customer_id: rx?.customer_id || null } })
+      .then(setClinical).catch(() => setClinical(null));
+  }, [rx]);
 
   const act = async (path) => {
     setBusy(true); setErr("");
@@ -233,6 +241,8 @@ function RxDetail({ id, onBack }) {
           {rx.status !== "dispensed" && rx.status !== "cancelled" && <button className="btn-outline text-rose-500" disabled={busy} onClick={() => act("cancel")}><Ban className="h-4 w-4" /> Cancel</button>}
         </div>
       </div>
+
+      <ClinicalWarnings data={clinical} />
 
       <div className="card p-6">
         <h2 className="mb-3 font-display text-lg font-semibold text-sage-900 dark:text-sage-50">Medications</h2>

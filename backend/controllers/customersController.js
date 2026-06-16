@@ -78,15 +78,18 @@ exports.get = async (req, res) => {
   }
 };
 
+const cleanAllergies = (a) => (Array.isArray(a) ? a.map((x) => String(x).trim()).filter(Boolean) : []);
+
 exports.create = async (req, res) => {
-  const { name, phone, email, address, credit_limit, notes } = req.body || {};
+  const { name, phone, email, address, credit_limit, notes, allergies } = req.body || {};
   if (!name || !name.trim()) return res.status(400).json({ message: "Customer name is required" });
   try {
     const { rows } = await pool.query(
-      `INSERT INTO customers (name, phone, email, address, credit_limit, notes)
-       VALUES ($1,$2,$3,$4,COALESCE($5,0),$6) RETURNING *`,
+      `INSERT INTO customers (name, phone, email, address, credit_limit, notes, allergies)
+       VALUES ($1,$2,$3,$4,COALESCE($5,0),$6,$7) RETURNING *`,
       [name.trim(), phone || null, email || null, address || null,
-       credit_limit != null && credit_limit !== "" ? Number(credit_limit) : 0, notes || null]
+       credit_limit != null && credit_limit !== "" ? Number(credit_limit) : 0, notes || null,
+       JSON.stringify(cleanAllergies(allergies))]
     );
     res.status(201).json(rows[0]);
   } catch (e) {
@@ -96,17 +99,19 @@ exports.create = async (req, res) => {
 
 exports.update = async (req, res) => {
   const id = Number(req.params.id);
-  const { name, phone, email, address, credit_limit, notes, is_active } = req.body || {};
+  const { name, phone, email, address, credit_limit, notes, is_active, allergies } = req.body || {};
   try {
     const { rows } = await pool.query(
       `UPDATE customers SET
          name = COALESCE($1, name), phone = $2, email = $3, address = $4,
          credit_limit = COALESCE($5, credit_limit), notes = $6,
-         is_active = COALESCE($7, is_active)
+         is_active = COALESCE($7, is_active),
+         allergies = COALESCE($9::jsonb, allergies)
        WHERE id = $8 RETURNING *`,
       [name?.trim() || null, phone || null, email || null, address || null,
        credit_limit != null && credit_limit !== "" ? Number(credit_limit) : null,
-       notes || null, typeof is_active === "boolean" ? is_active : null, id]
+       notes || null, typeof is_active === "boolean" ? is_active : null, id,
+       allergies !== undefined ? JSON.stringify(cleanAllergies(allergies)) : null]
     );
     if (!rows.length) return res.status(404).json({ message: "Customer not found" });
     res.json(rows[0]);

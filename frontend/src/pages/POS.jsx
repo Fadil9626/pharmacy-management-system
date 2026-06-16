@@ -6,6 +6,7 @@ import ReceiptModal from "../components/Receipt.jsx";
 import { cacheCatalogue, loadCachedCatalogue, queueSale, queueCount } from "../lib/offlineDB.js";
 import { syncQueue } from "../lib/offlineSync.js";
 import ProductImage from "../components/ProductImage.jsx";
+import ClinicalWarnings from "../components/ClinicalWarnings.jsx";
 import {
   Search, Plus, Minus, Trash2, ShoppingCart, Loader2, CheckCircle2, X,
   ShieldAlert, Banknote, CreditCard, Smartphone, ScanLine, HandCoins, Wallet, Lock,
@@ -57,6 +58,8 @@ export default function POS() {
   const [syncMsg, setSyncMsg] = useState("");
   const [isFs, setIsFs] = useState(false);
   const [promo, setPromo] = useState({ discount: 0, applied: [] });
+  const [clinical, setClinical] = useState(null);
+  const [ackClinical, setAckClinical] = useState(false);
   const searchRef = useRef(null);
   const posRef = useRef(null);
 
@@ -82,6 +85,18 @@ export default function POS() {
     }, 250);
     return () => clearTimeout(id);
   }, [cart]);
+
+  // Live clinical safety check — allergies + interactions for the cart/customer.
+  useEffect(() => {
+    if (!cart.length || !navigator.onLine) { setClinical(null); setAckClinical(false); return; }
+    const items = cart.map((c) => ({ product_id: c.id }));
+    const id = setTimeout(() => {
+      api("/api/clinical/check", { method: "POST", body: { items, customer_id: custId || null } })
+        .then((r) => { setClinical(r); setAckClinical(false); })
+        .catch(() => setClinical(null));
+    }, 250);
+    return () => clearTimeout(id);
+  }, [cart, custId]);
 
   const loadParked = () => api("/api/pos/parked").then((r) => setParkedCount(r.length)).catch(() => {});
 
@@ -250,6 +265,7 @@ export default function POS() {
   const total = taxable + tax;
   const tend = Number(tendered) || 0;
   const change = !splitMode && payment === "cash" && tend > 0 ? Math.max(0, tend - total) : null;
+  const hasClinicalWarn = !!clinical && ((clinical.allergies || []).length > 0 || (clinical.interactions || []).length > 0);
   const short = !splitMode && payment === "cash" && tendered !== "" && tend < total;
   // Split payment tallies
   const splitSum = Math.round((["cash", "card", "mobile", "account", "loyalty"].reduce((s, k) => s + (Number(split[k]) || 0), 0)) * 100) / 100;
@@ -633,12 +649,22 @@ export default function POS() {
             )}
           </div>
 
+          {hasClinicalWarn && (
+            <div className="space-y-2">
+              <ClinicalWarnings data={clinical} />
+              <label className="flex items-start gap-2 text-sm text-sage-700 dark:text-sage-200">
+                <input type="checkbox" checked={ackClinical} onChange={(e) => setAckClinical(e.target.checked)} className="mt-0.5 h-4 w-4 rounded border-sage-300 text-brand-600 focus:ring-brand-500" />
+                I've reviewed the clinical alert and it's safe to dispense.
+              </label>
+            </div>
+          )}
+
           {short && <div className="text-sm text-amber-600 dark:text-amber-400">Amount tendered is less than the total.</div>}
           {splitMode && !splitOk && cart.length > 0 && <div className="text-sm text-amber-600 dark:text-amber-400">Split must add up to {money(total)}.</div>}
           {overLimit && <div className="text-sm text-rose-600 dark:text-rose-400">This sale exceeds the customer's credit limit.</div>}
           {err && <div className="text-sm text-rose-600 dark:text-rose-400">{err}</div>}
 
-          <button onClick={checkout} disabled={busy || cart.length === 0 || short || overLimit || controlledBlocked || (splitMode && !splitOk)} className="btn-primary w-full !py-3 text-base">
+          <button onClick={checkout} disabled={busy || cart.length === 0 || short || overLimit || controlledBlocked || (splitMode && !splitOk) || (hasClinicalWarn && !ackClinical)} className="btn-primary w-full !py-3 text-base">
             {busy ? <Loader2 className="h-5 w-5 animate-spin" /> : (!splitMode && payment === "account") ? <HandCoins className="h-5 w-5" /> : <CheckCircle2 className="h-5 w-5" />}
             {(!splitMode && payment === "account") ? "Charge to account" : "Complete sale"} · {money(total)}
           </button>
