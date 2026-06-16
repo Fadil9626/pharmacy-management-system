@@ -242,6 +242,8 @@ app.post("/api/rtv", protect, requireModule("purchasing"), requirePermission("pu
 // Reports
 app.get("/api/reports/sales", protect, requireModule("reports"), requirePermission("reports.view"), reports.sales);
 app.get("/api/reports/inventory", protect, requireModule("reports"), requirePermission("reports.view"), reports.inventory);
+app.get("/api/reports/vat", protect, requireModule("reports"), requirePermission("reports.view"), reports.vatReturn);
+app.post("/api/reports/email-summary", protect, requireModule("reports"), requirePermission("reports.view"), reports.emailSummary);
 
 // Public-health surveillance (case aggregates from tagged dispensing)
 app.get("/api/public-health/tags", protect, publicHealth.tags);

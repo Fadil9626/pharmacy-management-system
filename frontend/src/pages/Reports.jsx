@@ -3,7 +3,7 @@ import { api } from "../lib/api.js";
 import {
   TrendingUp, Wallet, Receipt, Percent, Loader2, CalendarClock,
   Boxes, Banknote, CreditCard, Smartphone, Trophy, AlertTriangle,
-  Download, Tag, UserRound, Clock, Undo2, GitBranch, Activity,
+  Download, Tag, UserRound, Clock, Undo2, GitBranch, Activity, Landmark, Mail,
 } from "lucide-react";
 import { money, money0, num } from "../lib/money.js";
 import { downloadCSV } from "../lib/csv.js";
@@ -42,6 +42,9 @@ export default function Reports() {
   const [err, setErr] = useState("");
   const [ph, setPh] = useState(null);
   const [phPeriod, setPhPeriod] = useState("week");
+  const [vat, setVat] = useState(null);
+  const [emailBusy, setEmailBusy] = useState(false);
+  const [emailMsg, setEmailMsg] = useState("");
 
   useEffect(() => {
     setSales(null);
@@ -54,6 +57,16 @@ export default function Reports() {
     setPh(null);
     api("/api/public-health/surveillance", { params: { from, to, period: phPeriod } }).then(setPh).catch(() => setPh({ rows: [], total_cases: 0 }));
   }, [from, to, phPeriod]);
+  useEffect(() => {
+    setVat(null);
+    api("/api/reports/vat", { params: { from, to } }).then(setVat).catch(() => {});
+  }, [from, to]);
+
+  const emailSummary = async (period) => {
+    setEmailBusy(true); setEmailMsg("");
+    try { const r = await api("/api/reports/email-summary", { method: "POST", body: { period } }); setEmailMsg(`Summary sent to ${r.recipients} recipient(s).`); }
+    catch (e) { setEmailMsg(e.message); } finally { setEmailBusy(false); setTimeout(() => setEmailMsg(""), 5000); }
+  };
 
   const applyPreset = (p) => {
     setPreset(p.key);
@@ -311,6 +324,34 @@ export default function Reports() {
         </div>
       </div>
 
+      {/* Tax & accounting — VAT return + scheduled summary */}
+      <div className="card p-6">
+        <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+          <div className="flex items-center gap-2">
+            <Landmark className="h-5 w-5 text-brand-600" />
+            <h2 className="font-display text-lg font-semibold text-sage-900 dark:text-sage-50">Tax &amp; accounting</h2>
+          </div>
+          <div className="flex items-center gap-2">
+            {emailMsg && <span className="text-xs text-sage-500 dark:text-sage-400">{emailMsg}</span>}
+            <button onClick={() => emailSummary("today")} disabled={emailBusy} className="btn-outline !px-3 !py-1.5 text-xs"><Mail className="h-3.5 w-3.5" /> Email daily</button>
+            <button onClick={() => emailSummary("week")} disabled={emailBusy} className="btn-outline !px-3 !py-1.5 text-xs"><Mail className="h-3.5 w-3.5" /> Email weekly</button>
+            {vat?.by_day?.length > 0 && (
+              <button onClick={() => downloadCSV(`vat_${from}_${to}`, vat.by_day.map((d) => ({ date: d.day, transactions: d.txns, net_sales: d.net, vat: d.vat, gross: d.gross })), ["date", "transactions", "net_sales", "vat", "gross"])}
+                className="btn-ghost !px-2 !py-1 text-xs text-sage-400 hover:text-brand-600"><Download className="h-3.5 w-3.5" /> CSV</button>
+            )}
+          </div>
+        </div>
+        {!vat ? <Empty label="…" /> : (
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+            <ValTile label="Net sales" value={money0(vat.net_sales)} />
+            <ValTile label={`Output VAT (${vat.tax_percent}%)`} value={money0(vat.output_vat)} />
+            <ValTile label="VAT refunded" value={money0(vat.refunds_vat)} />
+            <ValTile label="Net VAT due" value={money0(vat.net_vat_due)} accent />
+          </div>
+        )}
+        <p className="mt-3 text-xs text-sage-400">VAT for the selected period. The daily/weekly email summary sends to your alert recipients (Settings → Notifications) — cron the <code>/api/reports/email-summary</code> endpoint to automate it.</p>
+      </div>
+
       {/* Public-health surveillance — case signals from tagged dispensing */}
       <div className="card p-6">
         <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
@@ -398,6 +439,15 @@ function ValRow({ label, value, accent }) {
     <div className="flex justify-between">
       <span className="text-sage-500 dark:text-sage-400">{label}</span>
       <span className={`font-semibold ${accent ? "text-brand-600 dark:text-brand-400" : "text-sage-900 dark:text-sage-50"}`}>{value}</span>
+    </div>
+  );
+}
+
+function ValTile({ label, value, accent }) {
+  return (
+    <div className={`rounded-xl border p-3 ${accent ? "border-brand-200 bg-brand-50 dark:border-brand-900/50 dark:bg-brand-900/20" : "border-sage-200 dark:border-sage-800"}`}>
+      <div className="text-xs text-sage-500 dark:text-sage-400">{label}</div>
+      <div className={`mt-0.5 text-lg font-semibold ${accent ? "text-brand-700 dark:text-brand-300" : "text-sage-900 dark:text-sage-50"}`}>{value}</div>
     </div>
   );
 }
