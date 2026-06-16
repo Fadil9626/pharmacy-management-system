@@ -3,7 +3,6 @@ import { NavLink, Outlet, useNavigate, useLocation } from "react-router-dom";
 import { useAuth } from "../context/AuthContext.jsx";
 import { useTheme } from "../lib/theme.js";
 import ErrorBoundary from "./ErrorBoundary.jsx";
-import SecurityModal from "./SecurityModal.jsx";
 import { Loader2 } from "lucide-react";
 import { api, getActiveBranch, setActiveBranch } from "../lib/api.js";
 import {
@@ -90,7 +89,6 @@ export default function Layout() {
   const toggleCollapsed = () =>
     setCollapsed((c) => { const v = !c; localStorage.setItem("remedy-sidebar", v ? "1" : "0"); return v; });
   const [userMenu, setUserMenu] = useState(false);
-  const [showSecurity, setShowSecurity] = useState(false);
 
   const logoutAllDevices = async () => {
     try { await api("/api/auth/logout-all", { method: "POST" }); } catch (_) {}
@@ -206,9 +204,9 @@ export default function Layout() {
                     <div className="text-sm font-semibold text-sage-900 dark:text-sage-50">{user?.full_name}</div>
                     <div className="text-xs capitalize text-sage-500 dark:text-sage-400">{user?.role}</div>
                   </div>
-                  <button onClick={() => { setUserMenu(false); setShowSecurity(true); }}
+                  <button onClick={() => { setUserMenu(false); navigate("/profile"); }}
                     className="flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-left text-sm text-sage-700 transition hover:bg-sage-100 dark:text-sage-200 dark:hover:bg-sage-800">
-                    <ShieldCheck className="h-4 w-4 text-brand-600" /> Two-factor &amp; security
+                    <ShieldCheck className="h-4 w-4 text-brand-600" /> My account &amp; security
                   </button>
                   <button onClick={() => { setUserMenu(false); logoutAllDevices(); }}
                     className="flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-left text-sm text-sage-700 transition hover:bg-sage-100 dark:text-sage-200 dark:hover:bg-sage-800">
@@ -239,8 +237,6 @@ export default function Layout() {
           </ErrorBoundary>
         </main>
       </div>
-
-      {showSecurity && <SecurityModal onClose={() => setShowSecurity(false)} />}
     </div>
   );
 }

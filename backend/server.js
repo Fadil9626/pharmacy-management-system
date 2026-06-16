@@ -95,6 +95,8 @@ app.post("/api/auth/2fa/enable", protect, auth.enable2fa);
 app.post("/api/auth/2fa/disable", protect, auth.disable2fa);
 app.post("/api/auth/logout-all", protect, auth.logoutAll);
 app.get("/api/me", protect, auth.me);
+app.patch("/api/me", protect, auth.updateProfile);
+app.post("/api/me/password", protect, auth.changePassword);
 app.get("/api/modules", protect, modules.list);
 app.get("/api/dashboard", protect, dashboard.summary);
 

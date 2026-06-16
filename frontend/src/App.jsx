@@ -26,6 +26,7 @@ const Finance = lazyWithRetry(() => import("./pages/Finance.jsx"));
 const Branches = lazyWithRetry(() => import("./pages/Branches.jsx"));
 const Staff = lazyWithRetry(() => import("./pages/Staff.jsx"));
 const Settings = lazyWithRetry(() => import("./pages/Settings.jsx"));
+const Profile = lazyWithRetry(() => import("./pages/Profile.jsx"));
 
 // Route table: each page declares the module it needs and the roles allowed.
 // The single source of truth the sidebar nav mirrors.
@@ -45,6 +46,7 @@ const ROUTES = [
   { path: "branches", el: <Branches />, module: "branches", roles: ["owner", "manager"] },
   { path: "staff", el: <Staff />, roles: ["owner", "manager"] },
   { path: "settings", el: <Settings />, roles: ["owner", "manager"] },
+  { path: "profile", el: <Profile /> }, // every signed-in user
 ];
 
 function Splash() {

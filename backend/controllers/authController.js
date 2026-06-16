@@ -5,6 +5,8 @@ const { permsForRole } = require("../lib/permissions");
 const loginGuard = require("../lib/loginGuard");
 const totp = require("../lib/totp");
 const { bumpTokenVersion } = require("../middleware/auth");
+const { validatePassword } = require("../lib/passwordPolicy");
+const { logAudit } = require("../lib/audit");
 
 // Issue the full session token (embeds token_version for revocation) + user payload.
 async function issueSession(user, res) {
@@ -144,6 +146,47 @@ exports.logoutAll = async (req, res) => {
     const { rows } = await pool.query("UPDATE users SET token_version = token_version + 1 WHERE id = $1 RETURNING token_version", [req.user.id]);
     bumpTokenVersion(req.user.id, rows[0].token_version);
     res.json({ success: true });
+  } catch (e) {
+    res.status(500).json({ message: e.message });
+  }
+};
+
+// Self-service: update your own display name.
+exports.updateProfile = async (req, res) => {
+  const { full_name } = req.body || {};
+  if (!full_name || !full_name.trim()) return res.status(400).json({ message: "Name can't be empty" });
+  try {
+    await pool.query("UPDATE users SET full_name = $1 WHERE id = $2", [full_name.trim(), req.user.id]);
+    res.json({ success: true });
+  } catch (e) {
+    res.status(500).json({ message: e.message });
+  }
+};
+
+// Self-service: change your own password. Verifies the current one, applies the
+// policy, then bumps token_version (logs out other devices) and reissues this
+// session's token so the current device stays signed in.
+exports.changePassword = async (req, res) => {
+  const { current_password, new_password } = req.body || {};
+  const pwErr = validatePassword(new_password);
+  if (pwErr) return res.status(400).json({ message: pwErr });
+  try {
+    const u = (await pool.query("SELECT password_hash FROM users WHERE id = $1", [req.user.id])).rows[0];
+    if (!u) return res.status(404).json({ message: "User not found" });
+    const ok = await bcrypt.compare(current_password || "", u.password_hash);
+    if (!ok) return res.status(400).json({ message: "Current password is incorrect" });
+    const hash = await bcrypt.hash(new_password, 10);
+    const { rows } = await pool.query(
+      "UPDATE users SET password_hash = $1, token_version = token_version + 1 WHERE id = $2 RETURNING token_version, role, branch_id, full_name",
+      [hash, req.user.id]
+    );
+    bumpTokenVersion(req.user.id, rows[0].token_version);
+    const token = jwt.sign(
+      { id: req.user.id, role: rows[0].role, branch_id: rows[0].branch_id, full_name: rows[0].full_name, tv: rows[0].token_version },
+      process.env.JWT_SECRET, { expiresIn: "12h" }
+    );
+    logAudit(req, "password_change", "user", req.user.id, null);
+    res.json({ success: true, token });
   } catch (e) {
     res.status(500).json({ message: e.message });
   }
