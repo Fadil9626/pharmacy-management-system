@@ -11,7 +11,8 @@ const sevChip = {
 export default function ClinicalWarnings({ data, className = "" }) {
   const allergies = data?.allergies || [];
   const interactions = data?.interactions || [];
-  if (!allergies.length && !interactions.length) return null;
+  const conditions = data?.conditions || [];
+  if (!allergies.length && !interactions.length && !conditions.length) return null;
   return (
     <div className={`rounded-xl border border-rose-300 bg-rose-50 p-3 text-sm dark:border-rose-900/50 dark:bg-rose-950/30 ${className}`}>
       <div className="mb-1.5 flex items-center gap-2 font-semibold text-rose-700 dark:text-rose-300">
@@ -28,6 +29,12 @@ export default function ClinicalWarnings({ data, className = "" }) {
           <li key={`i${i}`} className="flex items-start gap-1.5">
             <span className={`chip mt-0.5 shrink-0 capitalize ${sevChip[x.severity] || sevChip.moderate}`}>{x.severity}</span>
             <span><b>{x.a}</b> + <b>{x.b}</b>{x.note ? ` — ${x.note}` : ""}</span>
+          </li>
+        ))}
+        {conditions.map((x, i) => (
+          <li key={`c${i}`} className="flex items-start gap-1.5">
+            <span className={`chip mt-0.5 shrink-0 capitalize ${sevChip[x.severity] || sevChip.moderate}`}>{x.severity}</span>
+            <span><b>{x.product}</b> — {x.note}</span>
           </li>
         ))}
       </ul>

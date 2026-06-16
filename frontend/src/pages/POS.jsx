@@ -7,10 +7,11 @@ import { cacheCatalogue, loadCachedCatalogue, queueSale, queueCount } from "../l
 import { syncQueue } from "../lib/offlineSync.js";
 import ProductImage from "../components/ProductImage.jsx";
 import ClinicalWarnings from "../components/ClinicalWarnings.jsx";
+import DosageCalculator from "../components/DosageCalculator.jsx";
 import {
   Search, Plus, Minus, Trash2, ShoppingCart, Loader2, CheckCircle2, X,
   ShieldAlert, Banknote, CreditCard, Smartphone, ScanLine, HandCoins, Wallet, Lock,
-  PauseCircle, Clock3, PlayCircle, Wifi, WifiOff, RefreshCw, CloudOff, Maximize2, Minimize2, Tag,
+  PauseCircle, Clock3, PlayCircle, Wifi, WifiOff, RefreshCw, CloudOff, Maximize2, Minimize2, Tag, Calculator,
 } from "lucide-react";
 
 const uuid = () =>
@@ -60,6 +61,7 @@ export default function POS() {
   const [promo, setPromo] = useState({ discount: 0, applied: [] });
   const [clinical, setClinical] = useState(null);
   const [ackClinical, setAckClinical] = useState(false);
+  const [showCalc, setShowCalc] = useState(false);
   const searchRef = useRef(null);
   const posRef = useRef(null);
 
@@ -399,6 +401,9 @@ export default function POS() {
               onKeyDown={onSearchKey}
             />
           </div>
+          <button type="button" onClick={() => setShowCalc(true)} className="btn-outline shrink-0 !px-3.5" title="Dosage calculator">
+            <Calculator className="h-5 w-5" />
+          </button>
           <button type="button" onClick={toggleFs} className="btn-outline shrink-0 !px-3.5" title={isFs ? "Exit full screen" : "Full screen"}>
             {isFs ? <Minimize2 className="h-5 w-5" /> : <Maximize2 className="h-5 w-5" />}
           </button>
@@ -680,6 +685,7 @@ export default function POS() {
       {showHold && (
         <HoldModal defaultLabel={customer} total={total} onClose={() => setShowHold(false)} onHold={doPark} />
       )}
+      {showCalc && <DosageCalculator onClose={() => setShowCalc(false)} />}
     </div>
     </div>
   );

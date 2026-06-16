@@ -5,23 +5,37 @@
 // pharmacist's judgement.
 async function check(db, productIds, customerId) {
   const ids = [...new Set((productIds || []).map(Number).filter(Boolean))];
-  if (!ids.length) return { allergies: [], interactions: [] };
+  if (!ids.length) return { allergies: [], interactions: [], conditions: [] };
 
   const prods = (await db.query(
-    "SELECT id, name, generic_name, category FROM products WHERE id = ANY($1)", [ids]
+    "SELECT id, name, generic_name, category, pregnancy_risk, lactation_risk, contraindications FROM products WHERE id = ANY($1)", [ids]
   )).rows;
   const textOf = (p) => [p.name, p.generic_name, p.category].filter(Boolean).join(" ").toLowerCase();
 
-  // Allergies
+  // Allergies + condition/pregnancy/lactation flags (need the customer record)
   const allergies = [];
+  const conditions = [];
   if (customerId) {
-    const c = (await db.query("SELECT allergies FROM customers WHERE id = $1", [Number(customerId)])).rows[0];
+    const c = (await db.query("SELECT allergies, conditions FROM customers WHERE id = $1", [Number(customerId)])).rows[0];
     const allergens = Array.isArray(c?.allergies) ? c.allergies : [];
+    const conds = (Array.isArray(c?.conditions) ? c.conditions : []).map((x) => String(x).toLowerCase().trim());
+    const has = (...keys) => keys.some((k) => conds.includes(k));
     for (const p of prods) {
       const t = textOf(p);
       for (const a of allergens) {
         const term = String(a || "").toLowerCase().trim();
         if (term && t.includes(term)) allergies.push({ product: p.name, allergen: a });
+      }
+      // Pregnancy / lactation risk
+      if (p.pregnancy_risk && p.pregnancy_risk !== "none" && has("pregnant", "pregnancy"))
+        conditions.push({ product: p.name, severity: p.pregnancy_risk === "avoid" ? "severe" : "moderate", note: `${p.pregnancy_risk === "avoid" ? "Avoid" : "Caution"} in pregnancy` });
+      if (p.lactation_risk && p.lactation_risk !== "none" && has("breastfeeding", "lactating", "lactation"))
+        conditions.push({ product: p.name, severity: p.lactation_risk === "avoid" ? "severe" : "moderate", note: `${p.lactation_risk === "avoid" ? "Avoid" : "Caution"} while breastfeeding` });
+      // Drug–disease contraindications
+      const cis = Array.isArray(p.contraindications) ? p.contraindications : [];
+      for (const ci of cis) {
+        const key = String(ci).toLowerCase().trim();
+        if (key && conds.includes(key)) conditions.push({ product: p.name, severity: "severe", note: `Contraindicated in ${ci}` });
       }
     }
   }
@@ -42,7 +56,7 @@ async function check(db, productIds, customerId) {
       }
     }
   }
-  return { allergies, interactions };
+  return { allergies, interactions, conditions };
 }
 
 module.exports = { check };

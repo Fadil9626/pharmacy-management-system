@@ -114,6 +114,7 @@ function CustomerForm({ customer, onClose, onSaved }) {
     name: customer?.name || "", phone: customer?.phone || "", email: customer?.email || "",
     address: customer?.address || "", credit_limit: customer?.credit_limit ?? "", notes: customer?.notes || "",
     allergies: (customer?.allergies || []).join(", "),
+    conditions: (customer?.conditions || []).join(", "),
   });
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
@@ -122,7 +123,11 @@ function CustomerForm({ customer, onClose, onSaved }) {
     e.preventDefault();
     setBusy(true); setErr("");
     try {
-      const body = { ...f, allergies: f.allergies.split(",").map((s) => s.trim()).filter(Boolean) };
+      const body = {
+        ...f,
+        allergies: f.allergies.split(",").map((s) => s.trim()).filter(Boolean),
+        conditions: f.conditions.split(",").map((s) => s.trim()).filter(Boolean),
+      };
       await api(editing ? `/api/customers/${customer.id}` : "/api/customers", { method: editing ? "PATCH" : "POST", body });
       onSaved();
     } catch (e) { setErr(e.message); setBusy(false); }
@@ -143,6 +148,10 @@ function CustomerForm({ customer, onClose, onSaved }) {
         <div>
           <label className="label">Allergies <span className="font-normal text-sage-400">(comma-separated — flags risky items at the till)</span></label>
           <input className="input" value={f.allergies} onChange={set("allergies")} placeholder="e.g. Penicillin, Aspirin, Sulfa" />
+        </div>
+        <div>
+          <label className="label">Conditions <span className="font-normal text-sage-400">(pregnancy, breastfeeding, asthma, renal… — flags contraindications)</span></label>
+          <input className="input" value={f.conditions} onChange={set("conditions")} placeholder="e.g. pregnant, asthma, renal" />
         </div>
         <div><label className="label">Notes</label><input className="input" value={f.notes} onChange={set("notes")} /></div>
         {err && <div className="text-sm text-rose-600 dark:text-rose-400">{err}</div>}
@@ -187,10 +196,16 @@ function CustomerDetail({ id, onBack }) {
         </div>
       </div>
 
-      {(c.allergies || []).length > 0 && (
+      {((c.allergies || []).length > 0 || (c.conditions || []).length > 0) && (
         <div className="flex flex-wrap items-center gap-2 rounded-xl border border-rose-300 bg-rose-50 px-3 py-2 text-sm dark:border-rose-900/50 dark:bg-rose-950/30">
-          <span className="flex items-center gap-1.5 font-semibold text-rose-700 dark:text-rose-300"><AlertTriangle className="h-4 w-4" /> Allergies:</span>
-          {c.allergies.map((a) => <span key={a} className="chip bg-rose-200 text-rose-800 dark:bg-rose-900/60 dark:text-rose-200">{a}</span>)}
+          {(c.allergies || []).length > 0 && <>
+            <span className="flex items-center gap-1.5 font-semibold text-rose-700 dark:text-rose-300"><AlertTriangle className="h-4 w-4" /> Allergies:</span>
+            {c.allergies.map((a) => <span key={a} className="chip bg-rose-200 text-rose-800 dark:bg-rose-900/60 dark:text-rose-200">{a}</span>)}
+          </>}
+          {(c.conditions || []).length > 0 && <>
+            <span className="ml-2 font-semibold text-amber-700 dark:text-amber-300">Conditions:</span>
+            {c.conditions.map((a) => <span key={a} className="chip bg-amber-200 text-amber-800 dark:bg-amber-900/60 dark:text-amber-200">{a}</span>)}
+          </>}
         </div>
       )}
 

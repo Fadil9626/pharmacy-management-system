@@ -89,6 +89,7 @@ exports.listLite = async (req, res) => {
       `SELECT p.id, p.name, p.generic_name, p.category, p.category_id, p.dosage_form,
               p.strength, p.unit, p.barcode, p.is_controlled, p.reorder_level, p.base_price,
               p.pack_size, p.pack_label, p.surveillance_tag, (p.image IS NOT NULL) AS has_image,
+              p.strength_mg, p.dose_mg_per_kg, p.dose_max_mg, p.default_frequency,
               COALESCE(s.qty, 0)::int   AS stock,
               COALESCE(s.cost, 0)::float  AS last_cost,
               COALESCE(s.price, 0)::float AS last_price
@@ -173,8 +174,14 @@ async function resolveCategory(category_id, categoryText) {
   return { id: null, name: categoryText || null };
 }
 
+// Clinical/dosing field normalizers.
+const numOrNull = (v) => (v !== "" && v != null ? Number(v) : null);
+const riskVal = (v) => (["none", "caution", "avoid"].includes(v) ? v : "none");
+const condArr = (v) => JSON.stringify(Array.isArray(v) ? v.map((x) => String(x).trim()).filter(Boolean) : []);
+
 exports.createProduct = async (req, res) => {
-  const { name, generic_name, category, category_id, dosage_form, strength, unit, barcode, is_controlled, reorder_level, base_price, pack_size, pack_label, surveillance_tag, image } = req.body || {};
+  const b = req.body || {};
+  const { name, generic_name, category, category_id, dosage_form, strength, unit, barcode, is_controlled, reorder_level, base_price, pack_size, pack_label, surveillance_tag, image } = b;
   if (!name) return res.status(400).json({ message: "Product name is required" });
   try {
     const cat = await resolveCategory(category_id, category);
@@ -187,12 +194,15 @@ exports.createProduct = async (req, res) => {
     let bc = barcode || null;
     if (!bc && def.barcode_auto) bc = await mint(def.barcode_prefix, name);
     const { rows } = await pool.query(
-      `INSERT INTO products (name, generic_name, category, category_id, dosage_form, strength, unit, barcode, is_controlled, reorder_level, base_price, pack_size, pack_label, surveillance_tag, image)
-       VALUES ($1,$2,$3,$4,$5,$6,COALESCE($7,'unit'),$8,COALESCE($9,false),$10,$11,$12,$13,$14,$15) RETURNING id`,
+      `INSERT INTO products (name, generic_name, category, category_id, dosage_form, strength, unit, barcode, is_controlled, reorder_level, base_price, pack_size, pack_label, surveillance_tag, image,
+                             strength_mg, dose_mg_per_kg, dose_max_mg, default_frequency, pregnancy_risk, lactation_risk, contraindications)
+       VALUES ($1,$2,$3,$4,$5,$6,COALESCE($7,'unit'),$8,COALESCE($9,false),$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22) RETURNING id`,
       [name, generic_name || null, cat.name, cat.id, dosage_form || null, strength || null,
        unit || null, bc, is_controlled || false, reorder,
        base_price !== "" && base_price != null ? Number(base_price) : null,
-       pack, pack_label || null, surveillance_tag || null, image || null]
+       pack, pack_label || null, surveillance_tag || null, image || null,
+       numOrNull(b.strength_mg), numOrNull(b.dose_mg_per_kg), numOrNull(b.dose_max_mg), b.default_frequency || null,
+       riskVal(b.pregnancy_risk), riskVal(b.lactation_risk), condArr(b.contraindications)]
     );
     res.status(201).json({ id: rows[0].id });
   } catch (e) {
@@ -202,7 +212,8 @@ exports.createProduct = async (req, res) => {
 
 exports.updateProduct = async (req, res) => {
   const id = Number(req.params.id);
-  const { name, generic_name, category, category_id, dosage_form, strength, unit, barcode, is_controlled, reorder_level, base_price, pack_size, pack_label, surveillance_tag, image } = req.body || {};
+  const b = req.body || {};
+  const { name, generic_name, category, category_id, dosage_form, strength, unit, barcode, is_controlled, reorder_level, base_price, pack_size, pack_label, surveillance_tag, image } = b;
   if (!name) return res.status(400).json({ message: "Product name is required" });
   try {
     const cat = await resolveCategory(category_id, category);
@@ -213,13 +224,17 @@ exports.updateProduct = async (req, res) => {
          unit=COALESCE($7,'unit'), barcode=$8, is_controlled=COALESCE($9,false),
          reorder_level=COALESCE($10,10), base_price=COALESCE($12, base_price),
          pack_size=$13, pack_label=$14, surveillance_tag=$15,
-         image = CASE WHEN $16::text = '' THEN NULL WHEN $16::text IS NULL THEN image ELSE $16::text END
+         image = CASE WHEN $16::text = '' THEN NULL WHEN $16::text IS NULL THEN image ELSE $16::text END,
+         strength_mg=$17, dose_mg_per_kg=$18, dose_max_mg=$19, default_frequency=$20,
+         pregnancy_risk=$21, lactation_risk=$22, contraindications=$23::jsonb
        WHERE id=$11 RETURNING id, name, base_price, reorder_level`,
       [name, generic_name || null, cat.name, cat.id, dosage_form || null, strength || null,
        unit || null, barcode || null, is_controlled || false, reorder_level || 10, id,
        base_price !== "" && base_price != null ? Number(base_price) : null,
        pack, pack_label || null, surveillance_tag || null,
-       image === undefined ? null : image]
+       image === undefined ? null : image,
+       numOrNull(b.strength_mg), numOrNull(b.dose_mg_per_kg), numOrNull(b.dose_max_mg), b.default_frequency || null,
+       riskVal(b.pregnancy_risk), riskVal(b.lactation_risk), condArr(b.contraindications)]
     );
     if (!rows.length) return res.status(404).json({ message: "Product not found" });
     logAudit(req, "product_update", "product", id, { name: rows[0].name, base_price: rows[0].base_price, reorder_level: rows[0].reorder_level });

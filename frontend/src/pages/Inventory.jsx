@@ -352,6 +352,10 @@ function ProductModal({ product, categories = [], onClose, onSaved }) {
     pack_size: product?.pack_size ?? 1, pack_label: product?.pack_label || "",
     surveillance_tag: product?.surveillance_tag || "",
     image: undefined, // undefined = keep existing, "" = remove, dataURL = set
+    strength_mg: product?.strength_mg ?? "", dose_mg_per_kg: product?.dose_mg_per_kg ?? "",
+    dose_max_mg: product?.dose_max_mg ?? "", default_frequency: product?.default_frequency || "",
+    pregnancy_risk: product?.pregnancy_risk || "none", lactation_risk: product?.lactation_risk || "none",
+    contraindications: (product?.contraindications || []).join(", "),
   });
   const [shTags, setShTags] = useState([]);
   useEffect(() => { api("/api/public-health/tags").then(setShTags).catch(() => {}); }, []);
@@ -367,7 +371,7 @@ function ProductModal({ product, categories = [], onClose, onSaved }) {
     try {
       await api(editing ? `/api/products/${product.id}` : "/api/products", {
         method: editing ? "PUT" : "POST",
-        body: { ...f, reorder_level: Number(f.reorder_level) || 0 },
+        body: { ...f, reorder_level: Number(f.reorder_level) || 0, contraindications: f.contraindications.split(",").map((s) => s.trim()).filter(Boolean) },
       });
       onSaved();
     } catch (e) {
@@ -464,6 +468,24 @@ function ProductModal({ product, categories = [], onClose, onSaved }) {
           />
           Controlled drug
         </label>
+
+        <details className="rounded-xl border border-sage-200 p-3 dark:border-sage-800">
+          <summary className="cursor-pointer text-sm font-medium text-sage-700 dark:text-sage-200">Dosing &amp; clinical safety <span className="font-normal text-sage-400">(optional)</span></summary>
+          <div className="mt-3 grid grid-cols-2 gap-3">
+            <Field label="Strength (mg per unit)"><input type="number" min="0" step="0.001" className="input" value={f.strength_mg} onChange={set("strength_mg")} placeholder="e.g. 500" /></Field>
+            <Field label="Dose (mg/kg per dose)"><input type="number" min="0" step="0.001" className="input" value={f.dose_mg_per_kg} onChange={set("dose_mg_per_kg")} placeholder="e.g. 25" /></Field>
+            <Field label="Max single dose (mg)"><input type="number" min="0" step="0.001" className="input" value={f.dose_max_mg} onChange={set("dose_max_mg")} placeholder="optional cap" /></Field>
+            <Field label="Default frequency"><input className="input" value={f.default_frequency} onChange={set("default_frequency")} placeholder="e.g. TID" /></Field>
+            <Field label="Pregnancy">
+              <select className="input" value={f.pregnancy_risk} onChange={set("pregnancy_risk")}><option value="none">No flag</option><option value="caution">Caution</option><option value="avoid">Avoid</option></select>
+            </Field>
+            <Field label="Breastfeeding">
+              <select className="input" value={f.lactation_risk} onChange={set("lactation_risk")}><option value="none">No flag</option><option value="caution">Caution</option><option value="avoid">Avoid</option></select>
+            </Field>
+          </div>
+          <Field label="Contraindicated conditions"><input className="input" value={f.contraindications} onChange={set("contraindications")} placeholder="comma-separated, e.g. asthma, renal, peptic ulcer" /></Field>
+          <p className="mt-1 text-xs text-sage-400">Used by the dosage calculator and the clinical alerts at the till (matched to the customer's recorded conditions).</p>
+        </details>
 
         {err && <div className="text-sm text-rose-600 dark:text-rose-400">{err}</div>}
         <div className="flex justify-end gap-2 pt-2">
