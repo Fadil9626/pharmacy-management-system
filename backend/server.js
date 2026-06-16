@@ -36,6 +36,7 @@ const publicHealth = require("./controllers/publicHealthController");
 const notifications = require("./controllers/notificationsController");
 const promotions = require("./controllers/promotionsController");
 const clinical = require("./controllers/clinicalController");
+const rtv = require("./controllers/rtvController");
 
 const app = express();
 app.use(cors());
@@ -225,6 +226,11 @@ app.post("/api/purchase-orders/:id/receive", protect, requireModule("purchasing"
 app.post("/api/purchase-orders/:id/cancel", protect, requireModule("purchasing"), requirePermission("purchasing.manage"), purchasing.cancelPO);
 app.get("/api/purchasing/payables", protect, requireModule("purchasing"), purchasing.listPayables);
 app.post("/api/purchase-orders/:id/pay", protect, requireModule("purchasing"), requirePermission("purchasing.manage"), purchasing.payPO);
+
+// Return to vendor
+app.get("/api/rtv", protect, requireModule("purchasing"), rtv.list);
+app.get("/api/rtv/returnable", protect, requireModule("purchasing"), rtv.returnable);
+app.post("/api/rtv", protect, requireModule("purchasing"), requirePermission("purchasing.manage"), rtv.create);
 
 // Reports
 app.get("/api/reports/sales", protect, requireModule("reports"), requirePermission("reports.view"), reports.sales);

@@ -237,9 +237,23 @@ exports.listPayables = async (req, res) => {
       const k = r.supplier_name || "—";
       bySupplier[k] = (bySupplier[k] || 0) + Number(r.outstanding);
     });
+    // Net return-to-vendor credit notes against what we owe each supplier.
+    const credits = await pool.query(
+      `SELECT s.name, COALESCE(SUM(r.total_credit),0)::float AS credit
+       FROM stock_returns_vendor r LEFT JOIN suppliers s ON r.supplier_id = s.id
+       WHERE ($1::int IS NULL OR r.branch_id = $1)
+       GROUP BY s.name`,
+      [branchId]
+    );
+    credits.rows.forEach((c) => {
+      const k = c.name || "—";
+      if (bySupplier[k] !== undefined) bySupplier[k] = Math.max(0, bySupplier[k] - Number(c.credit));
+    });
+    const totalCredit = credits.rows.reduce((s, c) => s + Number(c.credit), 0);
     res.json({
       payables: rows,
-      total_owed: rows.reduce((s, r) => s + Number(r.outstanding), 0),
+      total_owed: Math.max(0, rows.reduce((s, r) => s + Number(r.outstanding), 0) - totalCredit),
+      rtv_credit: Math.round(totalCredit * 100) / 100,
       by_supplier: Object.entries(bySupplier).map(([name, amount]) => ({ name, amount })).sort((a, b) => b.amount - a.amount),
     });
   } catch (e) {

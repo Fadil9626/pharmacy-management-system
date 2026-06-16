@@ -4,7 +4,7 @@ import { money } from "../lib/money.js";
 import ConfirmModal from "../components/Confirm.jsx";
 import {
   Truck, Plus, X, Loader2, PackageCheck, Trash2, ClipboardList,
-  AlertTriangle, Building2, ChevronRight, Ban, Wallet, HandCoins,
+  AlertTriangle, Building2, ChevronRight, Ban, Wallet, HandCoins, Undo2, CalendarClock,
 } from "lucide-react";
 
 const STATUS = {
@@ -18,6 +18,7 @@ const TABS = [
   { key: "orders", label: "Orders", icon: ClipboardList },
   { key: "reorder", label: "Reorder", icon: AlertTriangle },
   { key: "payables", label: "Payables", icon: Wallet },
+  { key: "returns", label: "Returns", icon: Undo2 },
   { key: "suppliers", label: "Suppliers", icon: Building2 },
 ];
 
@@ -99,6 +100,7 @@ export default function Purchasing() {
         />
       )}
       {tab === "payables" && <PayablesTab />}
+      {tab === "returns" && <ReturnsTab suppliers={suppliers} />}
       {tab === "suppliers" && (
         <SuppliersTab suppliers={suppliers} onReload={loadRefs} />
       )}
@@ -630,5 +632,136 @@ function ReceiveModal({ poId, onClose, onReceived }) {
         </div>
       )}
     </Modal>
+  );
+}
+
+const REASONS = [["expired", "Expired"], ["recalled", "Recalled"], ["damaged", "Damaged"], ["overstock", "Overstock"]];
+
+function ReturnsTab({ suppliers }) {
+  const [supplierId, setSupplierId] = useState("");
+  const [batches, setBatches] = useState(null);
+  const [qty, setQty] = useState({});
+  const [reason, setReason] = useState("expired");
+  const [note, setNote] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+  const [msg, setMsg] = useState("");
+  const [history, setHistory] = useState([]);
+
+  const loadReturnable = () => { if (supplierId) api(`/api/rtv/returnable?supplier_id=${supplierId}`).then(setBatches).catch((e) => setErr(e.message)); };
+  const loadHistory = () => api("/api/rtv").then(setHistory).catch(() => {});
+  useEffect(() => { loadHistory(); }, []);
+  useEffect(() => { setBatches(null); setQty({}); setMsg(""); if (supplierId) loadReturnable(); }, [supplierId]);
+
+  const totalCredit = (batches || []).reduce((s, b) => s + (Number(qty[b.batch_id]) || 0) * Number(b.cost_price), 0);
+  const count = Object.values(qty).filter((v) => Number(v) > 0).length;
+
+  const submit = async () => {
+    setErr(""); setMsg("");
+    const items = Object.entries(qty).filter(([, v]) => Number(v) > 0).map(([batch_id, q]) => ({ batch_id: Number(batch_id), qty: Number(q) }));
+    if (!items.length) { setErr("Enter a quantity to return."); return; }
+    setBusy(true);
+    try {
+      const r = await api("/api/rtv", { method: "POST", body: { supplier_id: Number(supplierId), reason, note, items } });
+      setMsg(`${r.reference} created — credit ${money(r.total_credit)}.`);
+      setQty({}); setNote(""); loadReturnable(); loadHistory();
+    } catch (e) { setErr(e.message); } finally { setBusy(false); }
+  };
+
+  return (
+    <div className="space-y-5">
+      <div className="card p-5">
+        <div className="grid gap-3 sm:grid-cols-3">
+          <div>
+            <label className="label">Supplier</label>
+            <select className="input" value={supplierId} onChange={(e) => setSupplierId(e.target.value)}>
+              <option value="">— Choose a supplier —</option>
+              {suppliers.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+            </select>
+          </div>
+          <div>
+            <label className="label">Reason</label>
+            <select className="input" value={reason} onChange={(e) => setReason(e.target.value)}>
+              {REASONS.map(([k, l]) => <option key={k} value={k}>{l}</option>)}
+            </select>
+          </div>
+          <div>
+            <label className="label">Note (optional)</label>
+            <input className="input" value={note} onChange={(e) => setNote(e.target.value)} placeholder="e.g. recall #1234" />
+          </div>
+        </div>
+
+        {supplierId && (
+          batches === null ? (
+            <div className="flex h-24 items-center justify-center text-sage-400"><Loader2 className="h-5 w-5 animate-spin" /></div>
+          ) : batches.length === 0 ? (
+            <p className="mt-4 text-sm text-sage-400">No on-hand stock from this supplier to return.</p>
+          ) : (
+            <div className="mt-4 overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b border-sage-200 text-left text-xs uppercase tracking-wide text-sage-400 dark:border-sage-800">
+                    <th className="px-3 py-2 font-medium">Product</th>
+                    <th className="px-3 py-2 font-medium">Batch</th>
+                    <th className="px-3 py-2 font-medium text-right">On hand</th>
+                    <th className="px-3 py-2 font-medium text-right">Unit cost</th>
+                    <th className="px-3 py-2 font-medium text-right">Return qty</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {batches.map((b) => (
+                    <tr key={b.batch_id} className="border-b border-sage-100 last:border-0 dark:border-sage-800/60">
+                      <td className="px-3 py-2 font-medium text-sage-900 dark:text-sage-50">{b.name}</td>
+                      <td className="px-3 py-2 text-sage-500">
+                        {b.batch_no || "—"}
+                        {b.expiry_date && <span className={`ml-2 chip ${b.expired ? "bg-rose-100 text-rose-700 dark:bg-rose-900/40 dark:text-rose-300" : "bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300"}`}><CalendarClock className="h-3 w-3" /> {b.expired ? "Expired" : new Date(b.expiry_date).toLocaleDateString()}</span>}
+                      </td>
+                      <td className="px-3 py-2 text-right text-sage-600 dark:text-sage-300">{b.quantity}</td>
+                      <td className="px-3 py-2 text-right text-sage-500">{money(b.cost_price)}</td>
+                      <td className="px-3 py-2 text-right">
+                        <input type="number" min="0" max={b.quantity} className="input !w-20 !py-1 text-right"
+                          value={qty[b.batch_id] ?? ""} onChange={(e) => setQty((q) => ({ ...q, [b.batch_id]: e.target.value }))} placeholder="0" />
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )
+        )}
+
+        {err && <div className="mt-3 text-sm text-rose-600 dark:text-rose-400">{err}</div>}
+        {msg && <div className="mt-3 flex items-center gap-1.5 text-sm font-medium text-brand-600 dark:text-brand-400"><PackageCheck className="h-4 w-4" /> {msg}</div>}
+
+        {batches?.length > 0 && (
+          <div className="mt-4 flex items-center justify-between">
+            <div className="text-sm text-sage-500 dark:text-sage-400">{count} line(s) · credit note <b className="text-sage-800 dark:text-sage-100">{money(totalCredit)}</b></div>
+            <button className="btn-primary" onClick={submit} disabled={busy || !count}>
+              {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Undo2 className="h-4 w-4" />} Return to vendor
+            </button>
+          </div>
+        )}
+      </div>
+
+      <div className="card p-5">
+        <h3 className="mb-3 font-display text-lg font-semibold text-sage-900 dark:text-sage-50">Recent returns</h3>
+        {history.length === 0 ? <p className="text-sm text-sage-400">No returns yet.</p> : (
+          <div className="space-y-2 text-sm">
+            {history.map((r) => (
+              <div key={r.id} className="flex flex-wrap items-center justify-between gap-2 border-b border-sage-100 pb-2 last:border-0 dark:border-sage-800/60">
+                <div>
+                  <span className="font-medium text-sage-800 dark:text-sage-100">{r.reference}</span>
+                  <span className="ml-2 text-sage-400">{r.supplier_name || "—"} · {r.units} units · <span className="capitalize">{r.reason}</span></span>
+                </div>
+                <div className="flex items-center gap-3">
+                  <span className="font-semibold text-brand-700 dark:text-brand-400">{money(r.total_credit)}</span>
+                  <span className="text-xs text-sage-400">{new Date(r.created_at).toLocaleDateString()}</span>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
   );
 }
