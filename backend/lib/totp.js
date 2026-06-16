@@ -49,6 +49,9 @@ function verify(secret, token, window = 1) {
   return false;
 }
 
+// Current 30s TOTP code for a secret (used by tests / self-checks).
+const current = (secret) => hotp(secret, Math.floor(Date.now() / 1000 / 30));
+
 const otpauthURL = (secret, account, issuer = "Remedy") =>
   `otpauth://totp/${encodeURIComponent(issuer)}:${encodeURIComponent(account)}?secret=${secret}&issuer=${encodeURIComponent(issuer)}&algorithm=SHA1&digits=6&period=30`;
 
@@ -62,4 +65,4 @@ function makeBackupCodes(n = 10) {
   return codes;
 }
 
-module.exports = { generateSecret, verify, otpauthURL, makeBackupCodes, hashCode };
+module.exports = { generateSecret, verify, current, otpauthURL, makeBackupCodes, hashCode };
