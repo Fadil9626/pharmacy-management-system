@@ -34,7 +34,28 @@ async function recentlyNotified(type, refId, hours) {
 
 async function deliver(channel, cfg, { to, subject, body }) {
   const c = (cfg && cfg[channel]) || {};
-  if (!c.enabled || !c.api_url) return { status: "logged", error: null };
+  if (!c.enabled) return { status: "logged", error: null };
+
+  // Email over SMTP (e.g. Gmail app password) takes precedence when configured.
+  if (channel === "email" && c.smtp_host && c.smtp_user && c.smtp_pass) {
+    try {
+      const nodemailer = require("nodemailer");
+      const port = Number(c.smtp_port) || 587;
+      const transporter = nodemailer.createTransport({
+        host: c.smtp_host,
+        port,
+        secure: c.smtp_secure != null ? !!c.smtp_secure : port === 465,
+        auth: { user: c.smtp_user, pass: c.smtp_pass },
+      });
+      await transporter.sendMail({ from: c.from || c.smtp_user, to, subject, text: body });
+      return { status: "sent", error: null };
+    } catch (e) {
+      return { status: "failed", error: e.message };
+    }
+  }
+
+  // Otherwise, an HTTP provider API (Resend-style JSON webhook).
+  if (!c.api_url) return { status: "logged", error: null };
   try {
     const payload =
       channel === "email"

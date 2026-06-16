@@ -3,7 +3,7 @@ const { logAudit } = require("../lib/audit");
 const { notify, getConfig, recentlyNotified } = require("../lib/notify");
 
 const DEFAULTS = {
-  email: { enabled: false, api_url: "", api_key: "", from: "" },
+  email: { enabled: false, api_url: "", api_key: "", from: "", smtp_host: "", smtp_port: 587, smtp_user: "", smtp_pass: "", smtp_secure: false },
   sms: { enabled: false, api_url: "", api_key: "", sender: "" },
   events: { low_stock: true, near_expiry: true, refill_due: true },
   recipients: { emails: [], phones: [] },
@@ -27,7 +27,8 @@ exports.getConfig = async (_req, res) => {
   try {
     const cfg = withDefaults(await getConfig());
     res.json({
-      email: { enabled: cfg.email.enabled, api_url: cfg.email.api_url, from: cfg.email.from, api_key_set: !!cfg.email.api_key },
+      email: { enabled: cfg.email.enabled, api_url: cfg.email.api_url, from: cfg.email.from, api_key_set: !!cfg.email.api_key,
+               smtp_host: cfg.email.smtp_host, smtp_port: cfg.email.smtp_port, smtp_user: cfg.email.smtp_user, smtp_secure: !!cfg.email.smtp_secure, smtp_pass_set: !!cfg.email.smtp_pass },
       sms: { enabled: cfg.sms.enabled, api_url: cfg.sms.api_url, sender: cfg.sms.sender, api_key_set: !!cfg.sms.api_key },
       events: cfg.events,
       recipients: cfg.recipients,
@@ -50,6 +51,11 @@ exports.saveConfig = async (req, res) => {
         api_url: b.email?.api_url ?? cur.email.api_url,
         from: b.email?.from ?? cur.email.from,
         api_key: b.email?.api_key ? b.email.api_key : cur.email.api_key,
+        smtp_host: b.email?.smtp_host ?? cur.email.smtp_host,
+        smtp_port: b.email?.smtp_port != null ? Number(b.email.smtp_port) : cur.email.smtp_port,
+        smtp_user: b.email?.smtp_user ?? cur.email.smtp_user,
+        smtp_pass: b.email?.smtp_pass ? b.email.smtp_pass : cur.email.smtp_pass,
+        smtp_secure: b.email?.smtp_secure != null ? !!b.email.smtp_secure : cur.email.smtp_secure,
       },
       sms: {
         enabled: !!b.sms?.enabled,

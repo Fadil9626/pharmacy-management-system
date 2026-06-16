@@ -345,7 +345,48 @@ function NotificationsTab({ isOwner }) {
   return (
     <Section icon={Bell} title="Notifications" hint="Alert staff and customers by email / SMS. Messages are always logged; they're delivered when a provider is configured.">
       <div className="space-y-4">
-        <Channel ch="email" label="Email" icon={Mail} idField="from" idLabel="From address" />
+        {/* Email — SMTP (e.g. Gmail) or an HTTP provider API */}
+        <div className="rounded-xl border border-sage-200 p-4 dark:border-sage-800">
+          <label className="flex items-center gap-2.5 font-medium text-sage-800 dark:text-sage-100">
+            <input type="checkbox" checked={cfg.email.enabled} onChange={setCh("email", "enabled")} disabled={!isOwner}
+              className="h-4 w-4 rounded border-sage-300 text-brand-600 focus:ring-brand-500" />
+            <Mail className="h-4 w-4 text-brand-600" /> Email
+          </label>
+          <div className="mt-3">
+            <Field label="From address">
+              <input className="input sm:max-w-sm" value={cfg.email.from} onChange={setCh("email", "from")} disabled={!isOwner} placeholder="you@gmail.com" />
+            </Field>
+          </div>
+
+          <div className="mt-3 rounded-lg bg-sage-50 p-3 dark:bg-sage-900">
+            <div className="text-sm font-medium text-sage-800 dark:text-sage-100">SMTP (Gmail app password)</div>
+            <div className="mt-2 grid gap-3 sm:grid-cols-2">
+              <Field label="SMTP host"><input className="input" value={cfg.email.smtp_host} onChange={setCh("email", "smtp_host")} disabled={!isOwner} placeholder="smtp.gmail.com" /></Field>
+              <Field label="Port"><input type="number" className="input" value={cfg.email.smtp_port} onChange={setCh("email", "smtp_port")} disabled={!isOwner} placeholder="587" /></Field>
+              <Field label="Username"><input className="input" value={cfg.email.smtp_user} onChange={setCh("email", "smtp_user")} disabled={!isOwner} placeholder="you@gmail.com" /></Field>
+              <Field label={`App password ${cfg.email.smtp_pass_set ? "(saved — blank to keep)" : ""}`}>
+                <input type="password" className="input" value={cfg.email.smtp_pass || ""} onChange={setCh("email", "smtp_pass")} disabled={!isOwner} placeholder={cfg.email.smtp_pass_set ? "•••••••• saved" : "16-char app password"} />
+              </Field>
+            </div>
+            <label className="mt-2 flex items-center gap-2 text-sm text-sage-600 dark:text-sage-300">
+              <input type="checkbox" checked={cfg.email.smtp_secure} onChange={setCh("email", "smtp_secure")} disabled={!isOwner} className="h-4 w-4 rounded border-sage-300 text-brand-600 focus:ring-brand-500" />
+              Use SSL (port 465)
+            </label>
+            <p className="mt-1.5 text-xs text-sage-400">Gmail: host <code>smtp.gmail.com</code>, port <code>587</code>, your Gmail as username, and a 16-char <b>App Password</b> (Google Account → Security → 2-Step Verification → App passwords). Requires 2-Step Verification on.</p>
+          </div>
+
+          <details className="mt-3">
+            <summary className="cursor-pointer text-sm text-sage-500 dark:text-sage-400">Or use an HTTP provider API (Resend, etc.)</summary>
+            <div className="mt-2 grid gap-3 sm:grid-cols-2">
+              <Field label="Provider API URL"><input className="input" value={cfg.email.api_url} onChange={setCh("email", "api_url")} disabled={!isOwner} placeholder="https://api.resend.com/emails" /></Field>
+              <Field label={`API key ${cfg.email.api_key_set ? "(saved)" : ""}`}>
+                <input type="password" className="input" value={cfg.email.api_key || ""} onChange={setCh("email", "api_key")} disabled={!isOwner} placeholder={cfg.email.api_key_set ? "•••••••• saved" : "Bearer token"} />
+              </Field>
+            </div>
+            <p className="mt-1 text-xs text-sage-400">If an SMTP host is set above, it's used; otherwise this API.</p>
+          </details>
+        </div>
+
         <Channel ch="sms" label="SMS" icon={MessageSquare} idField="sender" idLabel="Sender ID" />
 
         <div className="rounded-xl border border-sage-200 p-4 dark:border-sage-800">
