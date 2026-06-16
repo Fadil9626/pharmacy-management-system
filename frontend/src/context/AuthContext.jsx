@@ -52,14 +52,25 @@ export function AuthProvider({ children }) {
     loadSession();
   }, [loadSession]);
 
-  const login = async (email, password) => {
-    const data = await api("/api/auth/login", { method: "POST", body: { email, password } });
+  const finalizeSession = async (data) => {
     setToken(data.token);
     setUser(data.user);
     const [mods, s] = await Promise.all([api("/api/modules"), api("/api/settings")]);
     setModules(mods);
     applySettings(s);
     return data.user;
+  };
+
+  // Returns { require_2fa, ticket } when a second step is needed; otherwise the user.
+  const login = async (email, password) => {
+    const data = await api("/api/auth/login", { method: "POST", body: { email, password } });
+    if (data.require_2fa) return { require_2fa: true, ticket: data.ticket };
+    return finalizeSession(data);
+  };
+
+  const verify2fa = async (ticket, code) => {
+    const data = await api("/api/auth/2fa/verify", { method: "POST", body: { ticket, code } });
+    return finalizeSession(data);
   };
 
   const logout = () => {
@@ -79,7 +90,7 @@ export function AuthProvider({ children }) {
 
   return (
     <AuthCtx.Provider value={{
-      user, modules, settings, loading, login, logout,
+      user, modules, settings, loading, login, verify2fa, logout,
       moduleEnabled, hasRole, can, reload: loadSession,
       reloadSettings: loadSettings, applySettings,
     }}>

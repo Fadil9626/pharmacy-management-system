@@ -89,6 +89,11 @@ if (!process.env.JWT_SECRET) {
 app.get("/api/health", (_, res) => res.json({ ok: true }));
 
 app.post("/api/auth/login", auth.login);
+app.post("/api/auth/2fa/verify", auth.verify2fa); // public: second login step (uses ticket)
+app.post("/api/auth/2fa/setup", protect, auth.setup2fa);
+app.post("/api/auth/2fa/enable", protect, auth.enable2fa);
+app.post("/api/auth/2fa/disable", protect, auth.disable2fa);
+app.post("/api/auth/logout-all", protect, auth.logoutAll);
 app.get("/api/me", protect, auth.me);
 app.get("/api/modules", protect, modules.list);
 app.get("/api/dashboard", protect, dashboard.summary);

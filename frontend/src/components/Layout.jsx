@@ -3,12 +3,14 @@ import { NavLink, Outlet, useNavigate, useLocation } from "react-router-dom";
 import { useAuth } from "../context/AuthContext.jsx";
 import { useTheme } from "../lib/theme.js";
 import ErrorBoundary from "./ErrorBoundary.jsx";
+import SecurityModal from "./SecurityModal.jsx";
 import { Loader2 } from "lucide-react";
 import { api, getActiveBranch, setActiveBranch } from "../lib/api.js";
 import {
   Pill, Plus, LayoutDashboard, Boxes, ShoppingCart, Receipt, Truck, FileText,
   Users, ClipboardList, ShieldAlert, Wallet, GitBranch, Moon, Sun,
   LogOut, Menu, X, Settings as SettingsIcon, UserCog, TrendingUp, PanelLeft,
+  ShieldCheck, Power, ChevronDown,
 } from "lucide-react";
 
 // nav item → required module key (null = always visible). "soon" items render disabled.
@@ -87,6 +89,14 @@ export default function Layout() {
   const [collapsed, setCollapsed] = useState(() => localStorage.getItem("remedy-sidebar") === "1");
   const toggleCollapsed = () =>
     setCollapsed((c) => { const v = !c; localStorage.setItem("remedy-sidebar", v ? "1" : "0"); return v; });
+  const [userMenu, setUserMenu] = useState(false);
+  const [showSecurity, setShowSecurity] = useState(false);
+
+  const logoutAllDevices = async () => {
+    try { await api("/api/auth/logout-all", { method: "POST" }); } catch (_) {}
+    logout();
+    navigate("/login", { replace: true });
+  };
 
   const items = NAV.filter(
     (n) =>
@@ -176,18 +186,42 @@ export default function Layout() {
           <button onClick={toggle} className="btn-ghost !px-2.5 !py-2 !text-[rgb(var(--topbar-text))]" aria-label="Toggle theme">
             {theme === "dark" ? <Sun className="h-5 w-5" /> : <Moon className="h-5 w-5" />}
           </button>
-          <div className="flex items-center gap-3 rounded-xl border border-sage-200 bg-white px-3 py-1.5 dark:border-sage-800 dark:bg-sage-900">
-            <div className="grid h-8 w-8 place-items-center rounded-full bg-brand-100 text-sm font-semibold text-brand-700 dark:bg-brand-900/50 dark:text-brand-300">
-              {(user?.full_name || "?").charAt(0).toUpperCase()}
-            </div>
-            <div className="hidden leading-tight sm:block">
-              <div className="text-sm font-semibold text-sage-900 dark:text-sage-50">
-                {user?.full_name}
+          <div className="relative">
+            <button onClick={() => setUserMenu((o) => !o)}
+              className="flex items-center gap-3 rounded-xl border border-sage-200 bg-white px-3 py-1.5 transition hover:bg-sage-50 dark:border-sage-800 dark:bg-sage-900 dark:hover:bg-sage-800">
+              <div className="grid h-8 w-8 place-items-center rounded-full bg-brand-100 text-sm font-semibold text-brand-700 dark:bg-brand-900/50 dark:text-brand-300">
+                {(user?.full_name || "?").charAt(0).toUpperCase()}
               </div>
-              <div className="text-xs capitalize text-sage-500 dark:text-sage-400">
-                {user?.role} · {user?.branch_name || "Main"}
+              <div className="hidden leading-tight sm:block">
+                <div className="text-sm font-semibold text-sage-900 dark:text-sage-50">{user?.full_name}</div>
+                <div className="text-xs capitalize text-sage-500 dark:text-sage-400">{user?.role} · {user?.branch_name || "Main"}</div>
               </div>
-            </div>
+              <ChevronDown className="h-4 w-4 text-sage-400" />
+            </button>
+            {userMenu && (
+              <>
+                <div className="fixed inset-0 z-40" onClick={() => setUserMenu(false)} />
+                <div className="absolute right-0 top-full z-50 mt-2 w-60 rounded-xl border border-sage-200 bg-white p-1.5 shadow-lg dark:border-sage-800 dark:bg-sage-900">
+                  <div className="px-3 py-2 sm:hidden">
+                    <div className="text-sm font-semibold text-sage-900 dark:text-sage-50">{user?.full_name}</div>
+                    <div className="text-xs capitalize text-sage-500 dark:text-sage-400">{user?.role}</div>
+                  </div>
+                  <button onClick={() => { setUserMenu(false); setShowSecurity(true); }}
+                    className="flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-left text-sm text-sage-700 transition hover:bg-sage-100 dark:text-sage-200 dark:hover:bg-sage-800">
+                    <ShieldCheck className="h-4 w-4 text-brand-600" /> Two-factor &amp; security
+                  </button>
+                  <button onClick={() => { setUserMenu(false); logoutAllDevices(); }}
+                    className="flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-left text-sm text-sage-700 transition hover:bg-sage-100 dark:text-sage-200 dark:hover:bg-sage-800">
+                    <Power className="h-4 w-4 text-sage-400" /> Log out all devices
+                  </button>
+                  <div className="my-1 border-t border-sage-100 dark:border-sage-800" />
+                  <button onClick={() => { setUserMenu(false); doLogout(); }}
+                    className="flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-left text-sm text-rose-600 transition hover:bg-rose-50 dark:text-rose-400 dark:hover:bg-rose-900/20">
+                    <LogOut className="h-4 w-4" /> Sign out
+                  </button>
+                </div>
+              </>
+            )}
           </div>
         </header>
 
@@ -205,6 +239,8 @@ export default function Layout() {
           </ErrorBoundary>
         </main>
       </div>
+
+      {showSecurity && <SecurityModal onClose={() => setShowSecurity(false)} />}
     </div>
   );
 }

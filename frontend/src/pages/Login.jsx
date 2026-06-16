@@ -5,21 +5,29 @@ import { useTheme } from "../lib/theme.js";
 import { Pill, Plus, Moon, Sun, Loader2, ShieldCheck, Leaf, Boxes } from "lucide-react";
 
 export default function Login() {
-  const { login } = useAuth();
+  const { login, verify2fa } = useAuth();
   const { theme, toggle } = useTheme();
   const navigate = useNavigate();
   const [email, setEmail] = useState("admin@remedy.local");
   const [password, setPassword] = useState("admin123");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  const [ticket, setTicket] = useState(null); // set once password ok but 2FA needed
+  const [code, setCode] = useState("");
 
   const submit = async (e) => {
     e.preventDefault();
     setError("");
     setBusy(true);
     try {
-      await login(email.trim(), password);
-      navigate("/", { replace: true });
+      if (ticket) {
+        await verify2fa(ticket, code.trim());
+        navigate("/", { replace: true });
+      } else {
+        const r = await login(email.trim(), password);
+        if (r && r.require_2fa) { setTicket(r.ticket); setCode(""); }
+        else navigate("/", { replace: true });
+      }
     } catch (err) {
       setError(err.message || "Unable to sign in");
     } finally {
@@ -102,30 +110,50 @@ export default function Login() {
           </p>
 
           <form onSubmit={submit} className="mt-8 space-y-4">
-            <div>
-              <label className="label" htmlFor="email">Email</label>
-              <input
-                id="email"
-                type="email"
-                className="input"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                autoComplete="username"
-                required
-              />
-            </div>
-            <div>
-              <label className="label" htmlFor="password">Password</label>
-              <input
-                id="password"
-                type="password"
-                className="input"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                autoComplete="current-password"
-                required
-              />
-            </div>
+            {!ticket ? (
+              <>
+                <div>
+                  <label className="label" htmlFor="email">Email</label>
+                  <input
+                    id="email"
+                    type="email"
+                    className="input"
+                    value={email}
+                    onChange={(e) => setEmail(e.target.value)}
+                    autoComplete="username"
+                    required
+                  />
+                </div>
+                <div>
+                  <label className="label" htmlFor="password">Password</label>
+                  <input
+                    id="password"
+                    type="password"
+                    className="input"
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    autoComplete="current-password"
+                    required
+                  />
+                </div>
+              </>
+            ) : (
+              <div>
+                <label className="label" htmlFor="code">Authentication code</label>
+                <input
+                  id="code"
+                  className="input text-center text-lg tracking-[0.3em]"
+                  value={code}
+                  onChange={(e) => setCode(e.target.value)}
+                  placeholder="123456"
+                  autoFocus
+                  inputMode="numeric"
+                  autoComplete="one-time-code"
+                  required
+                />
+                <p className="mt-1.5 text-xs text-sage-400">Enter the 6-digit code from your authenticator app, or a backup code.</p>
+              </div>
+            )}
 
             {error && (
               <div className="rounded-xl border border-red-200 bg-red-50 px-3.5 py-2.5 text-sm text-red-700 dark:border-red-900/50 dark:bg-red-950/40 dark:text-red-300">
@@ -135,8 +163,13 @@ export default function Login() {
 
             <button type="submit" className="btn-primary w-full" disabled={busy}>
               {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
-              {busy ? "Signing in…" : "Sign in"}
+              {busy ? (ticket ? "Verifying…" : "Signing in…") : (ticket ? "Verify" : "Sign in")}
             </button>
+            {ticket && (
+              <button type="button" className="btn-ghost w-full text-sm" onClick={() => { setTicket(null); setCode(""); setError(""); }}>
+                Back to sign in
+              </button>
+            )}
           </form>
 
           <p className="mt-6 text-center text-xs text-sage-400 dark:text-sage-500">

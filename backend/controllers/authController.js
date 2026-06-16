@@ -3,6 +3,27 @@ const jwt = require("jsonwebtoken");
 const pool = require("../config/db");
 const { permsForRole } = require("../lib/permissions");
 const loginGuard = require("../lib/loginGuard");
+const totp = require("../lib/totp");
+const { bumpTokenVersion } = require("../middleware/auth");
+
+// Issue the full session token (embeds token_version for revocation) + user payload.
+async function issueSession(user, res) {
+  const token = jwt.sign(
+    { id: user.id, role: user.role, branch_id: user.branch_id, full_name: user.full_name, tv: user.token_version || 0 },
+    process.env.JWT_SECRET,
+    { expiresIn: "12h" }
+  );
+  pool.query("UPDATE users SET last_login_at = NOW() WHERE id = $1", [user.id]).catch(() => {});
+  res.json({
+    token,
+    user: {
+      id: user.id, full_name: user.full_name, email: user.email,
+      role: user.role, branch_id: user.branch_id, branch_name: user.branch_name,
+      totp_enabled: user.totp_enabled,
+      permissions: await permsForRole(user.role),
+    },
+  });
+}
 
 exports.login = async (req, res) => {
   const { email, password } = req.body || {};
@@ -25,19 +46,104 @@ exports.login = async (req, res) => {
     if (!ok) { loginGuard.recordFail(req, email); return res.status(401).json({ message: "Invalid credentials" }); }
     loginGuard.reset(req, email);
 
-    const token = jwt.sign(
-      { id: user.id, role: user.role, branch_id: user.branch_id, full_name: user.full_name },
-      process.env.JWT_SECRET,
-      { expiresIn: "12h" }
+    // Two-factor: hand back a short-lived ticket; the code is verified next.
+    if (user.totp_enabled) {
+      const ticket = jwt.sign({ uid: user.id, purpose: "2fa" }, process.env.JWT_SECRET, { expiresIn: "5m" });
+      return res.json({ require_2fa: true, ticket });
+    }
+    await issueSession(user, res);
+  } catch (e) {
+    res.status(500).json({ message: e.message });
+  }
+};
+
+// Second login step: verify the TOTP (or a backup) code against the ticket.
+exports.verify2fa = async (req, res) => {
+  const { ticket, code } = req.body || {};
+  if (!ticket || !code) return res.status(400).json({ message: "Ticket and code are required" });
+  try {
+    let payload;
+    try { payload = jwt.verify(ticket, process.env.JWT_SECRET); } catch { return res.status(401).json({ message: "Your sign-in expired — start again" }); }
+    if (payload.purpose !== "2fa") return res.status(400).json({ message: "Invalid ticket" });
+    const { rows } = await pool.query(
+      `SELECT u.*, b.name AS branch_name FROM users u LEFT JOIN branches b ON u.branch_id = b.id WHERE u.id = $1`,
+      [payload.uid]
     );
-    res.json({
-      token,
-      user: {
-        id: user.id, full_name: user.full_name, email: user.email,
-        role: user.role, branch_id: user.branch_id, branch_name: user.branch_name,
-        permissions: await permsForRole(user.role),
-      },
-    });
+    const user = rows[0];
+    if (!user || !user.is_active) return res.status(401).json({ message: "Account unavailable" });
+
+    const clean = String(code).trim().toUpperCase();
+    if (totp.verify(user.totp_secret, clean)) {
+      return await issueSession(user, res);
+    }
+    // Backup code (one-time use)
+    const h = totp.hashCode(clean);
+    const codes = Array.isArray(user.backup_codes) ? user.backup_codes : [];
+    if (codes.includes(h)) {
+      await pool.query("UPDATE users SET backup_codes = $1 WHERE id = $2", [JSON.stringify(codes.filter((c) => c !== h)), user.id]);
+      return await issueSession(user, res);
+    }
+    return res.status(401).json({ message: "Incorrect code" });
+  } catch (e) {
+    res.status(500).json({ message: e.message });
+  }
+};
+
+// Begin 2FA setup: generate a pending secret + provisioning URI (for the QR).
+exports.setup2fa = async (req, res) => {
+  try {
+    const secret = totp.generateSecret();
+    await pool.query("UPDATE users SET totp_pending = $1 WHERE id = $2", [secret, req.user.id]);
+    const me = await pool.query("SELECT email FROM users WHERE id = $1", [req.user.id]);
+    res.json({ secret, otpauth_url: totp.otpauthURL(secret, me.rows[0]?.email || "user") });
+  } catch (e) {
+    res.status(500).json({ message: e.message });
+  }
+};
+
+// Confirm setup with a code; enable 2FA and return one-time backup codes.
+exports.enable2fa = async (req, res) => {
+  const { code } = req.body || {};
+  try {
+    const { rows } = await pool.query("SELECT totp_pending FROM users WHERE id = $1", [req.user.id]);
+    const pending = rows[0]?.totp_pending;
+    if (!pending) return res.status(400).json({ message: "Start setup first" });
+    if (!totp.verify(pending, code)) return res.status(400).json({ message: "That code didn't match — check the time on your phone and try again" });
+    const backup = totp.makeBackupCodes(10);
+    await pool.query(
+      "UPDATE users SET totp_secret = $1, totp_pending = NULL, totp_enabled = true, backup_codes = $2 WHERE id = $3",
+      [pending, JSON.stringify(backup.map(totp.hashCode)), req.user.id]
+    );
+    res.json({ enabled: true, backup_codes: backup });
+  } catch (e) {
+    res.status(500).json({ message: e.message });
+  }
+};
+
+// Turn off 2FA (requires a current code or backup code).
+exports.disable2fa = async (req, res) => {
+  const { code } = req.body || {};
+  try {
+    const { rows } = await pool.query("SELECT totp_secret, backup_codes FROM users WHERE id = $1", [req.user.id]);
+    const u = rows[0];
+    if (!u) return res.status(404).json({ message: "User not found" });
+    const clean = String(code || "").trim().toUpperCase();
+    const codes = Array.isArray(u.backup_codes) ? u.backup_codes : [];
+    if (!totp.verify(u.totp_secret, clean) && !codes.includes(totp.hashCode(clean)))
+      return res.status(400).json({ message: "Incorrect code" });
+    await pool.query("UPDATE users SET totp_secret = NULL, totp_pending = NULL, totp_enabled = false, backup_codes = '[]'::jsonb WHERE id = $1", [req.user.id]);
+    res.json({ enabled: false });
+  } catch (e) {
+    res.status(500).json({ message: e.message });
+  }
+};
+
+// Revoke every existing token for this user (log out all devices).
+exports.logoutAll = async (req, res) => {
+  try {
+    const { rows } = await pool.query("UPDATE users SET token_version = token_version + 1 WHERE id = $1 RETURNING token_version", [req.user.id]);
+    bumpTokenVersion(req.user.id, rows[0].token_version);
+    res.json({ success: true });
   } catch (e) {
     res.status(500).json({ message: e.message });
   }
@@ -46,7 +152,7 @@ exports.login = async (req, res) => {
 exports.me = async (req, res) => {
   try {
     const { rows } = await pool.query(
-      `SELECT u.id, u.full_name, u.email, u.role, u.branch_id, b.name AS branch_name
+      `SELECT u.id, u.full_name, u.email, u.role, u.branch_id, u.totp_enabled, u.last_login_at, b.name AS branch_name
        FROM users u LEFT JOIN branches b ON u.branch_id = b.id WHERE u.id = $1`,
       [req.user.id]
     );
