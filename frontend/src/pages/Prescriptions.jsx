@@ -180,7 +180,7 @@ function RxForm({ onClose, onSaved }) {
 }
 
 function RxDetail({ id, onBack }) {
-  const { settings } = useAuth();
+  const { settings, moduleEnabled } = useAuth();
   const [rx, setRx] = useState(null);
   const [err, setErr] = useState("");
   const [busy, setBusy] = useState(false);
@@ -203,6 +203,7 @@ function RxDetail({ id, onBack }) {
   };
   useEffect(() => { load(); }, [id]);
   useEffect(() => {
+    if (!moduleEnabled("clinical")) { setClinical(null); return; }
     const items = (rx?.items || []).filter((it) => it.product_id).map((it) => ({ product_id: it.product_id }));
     if (!items.length && !rx?.customer_id) { setClinical(null); return; }
     api("/api/clinical/check", { method: "POST", body: { items, customer_id: rx?.customer_id || null } })

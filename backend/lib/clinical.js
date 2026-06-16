@@ -56,7 +56,20 @@ async function check(db, productIds, customerId) {
       }
     }
   }
-  return { allergies, interactions, conditions };
+  // Cart-level risk flags (independent of any customer) — drives the walk-in
+  // "is the patient pregnant / affected?" prompt when no customer is attached.
+  const flags = prods
+    .filter((p) => (p.pregnancy_risk && p.pregnancy_risk !== "none") ||
+                   (p.lactation_risk && p.lactation_risk !== "none") ||
+                   (Array.isArray(p.contraindications) && p.contraindications.length))
+    .map((p) => ({
+      product: p.name,
+      pregnancy: p.pregnancy_risk && p.pregnancy_risk !== "none" ? p.pregnancy_risk : null,
+      lactation: p.lactation_risk && p.lactation_risk !== "none" ? p.lactation_risk : null,
+      contraindications: Array.isArray(p.contraindications) ? p.contraindications : [],
+    }));
+
+  return { allergies, interactions, conditions, flags };
 }
 
 module.exports = { check };

@@ -11,7 +11,7 @@ import DosageCalculator from "../components/DosageCalculator.jsx";
 import {
   Search, Plus, Minus, Trash2, ShoppingCart, Loader2, CheckCircle2, X,
   ShieldAlert, Banknote, CreditCard, Smartphone, ScanLine, HandCoins, Wallet, Lock,
-  PauseCircle, Clock3, PlayCircle, Wifi, WifiOff, RefreshCw, CloudOff, Maximize2, Minimize2, Tag, Calculator,
+  PauseCircle, Clock3, PlayCircle, Wifi, WifiOff, RefreshCw, CloudOff, Maximize2, Minimize2, Tag, Calculator, AlertTriangle,
 } from "lucide-react";
 
 const uuid = () =>
@@ -31,6 +31,7 @@ export default function POS() {
   const canAccount = can("pos.account");
   const financeOn = moduleEnabled("finance");
   const controlledOn = moduleEnabled("controlled_drugs");
+  const clinicalOn = moduleEnabled("clinical");
   const [shift, setShift] = useState(undefined); // undefined=checking, null=none, obj=open
   const [prescriber, setPrescriber] = useState({ name: "", license: "" });
   const [products, setProducts] = useState(null);
@@ -88,9 +89,9 @@ export default function POS() {
     return () => clearTimeout(id);
   }, [cart]);
 
-  // Live clinical safety check — allergies + interactions for the cart/customer.
+  // Live clinical safety check — allergies + interactions + condition flags.
   useEffect(() => {
-    if (!cart.length || !navigator.onLine) { setClinical(null); setAckClinical(false); return; }
+    if (!clinicalOn || !cart.length || !navigator.onLine) { setClinical(null); setAckClinical(false); return; }
     const items = cart.map((c) => ({ product_id: c.id }));
     const id = setTimeout(() => {
       api("/api/clinical/check", { method: "POST", body: { items, customer_id: custId || null } })
@@ -98,7 +99,7 @@ export default function POS() {
         .catch(() => setClinical(null));
     }, 250);
     return () => clearTimeout(id);
-  }, [cart, custId]);
+  }, [cart, custId, clinicalOn]);
 
   const loadParked = () => api("/api/pos/parked").then((r) => setParkedCount(r.length)).catch(() => {});
 
@@ -267,7 +268,10 @@ export default function POS() {
   const total = taxable + tax;
   const tend = Number(tendered) || 0;
   const change = !splitMode && payment === "cash" && tend > 0 ? Math.max(0, tend - total) : null;
-  const hasClinicalWarn = !!clinical && ((clinical.allergies || []).length > 0 || (clinical.interactions || []).length > 0);
+  const hasClinicalWarn = !!clinical && ((clinical.allergies || []).length > 0 || (clinical.interactions || []).length > 0 || (clinical.conditions || []).length > 0);
+  // Walk-in safety nudge: risky drugs in the cart but no customer to check against.
+  const walkInRisk = clinicalOn && !custId && !hasClinicalWarn && !!clinical && (clinical.flags || []).length > 0;
+  const needsClinicalAck = hasClinicalWarn || walkInRisk;
   const short = !splitMode && payment === "cash" && tendered !== "" && tend < total;
   // Split payment tallies
   const splitSum = Math.round((["cash", "card", "mobile", "account", "loyalty"].reduce((s, k) => s + (Number(split[k]) || 0), 0)) * 100) / 100;
@@ -401,9 +405,11 @@ export default function POS() {
               onKeyDown={onSearchKey}
             />
           </div>
-          <button type="button" onClick={() => setShowCalc(true)} className="btn-outline shrink-0 !px-3.5" title="Dosage calculator">
-            <Calculator className="h-5 w-5" />
-          </button>
+          {clinicalOn && (
+            <button type="button" onClick={() => setShowCalc(true)} className="btn-outline shrink-0 !px-3.5" title="Dosage calculator">
+              <Calculator className="h-5 w-5" />
+            </button>
+          )}
           <button type="button" onClick={toggleFs} className="btn-outline shrink-0 !px-3.5" title={isFs ? "Exit full screen" : "Full screen"}>
             {isFs ? <Minimize2 className="h-5 w-5" /> : <Maximize2 className="h-5 w-5" />}
           </button>
@@ -664,12 +670,27 @@ export default function POS() {
             </div>
           )}
 
+          {walkInRisk && (
+            <div className="space-y-2 rounded-xl border border-amber-300 bg-amber-50 p-3 text-sm dark:border-amber-900/50 dark:bg-amber-950/30">
+              <div className="flex items-center gap-2 font-semibold text-amber-700 dark:text-amber-300">
+                <AlertTriangle className="h-4 w-4" /> Check the patient
+              </div>
+              <p className="text-amber-700 dark:text-amber-200">
+                This sale contains {(clinical.flags || []).map((f) => f.product).join(", ")} — confirm the patient isn't <b>pregnant</b>, <b>breastfeeding</b>, or affected by a relevant condition{(clinical.flags || []).some((f) => f.contraindications?.length) ? ` (${[...new Set(clinical.flags.flatMap((f) => f.contraindications))].join(", ")})` : ""}.
+              </p>
+              <label className="flex items-start gap-2 text-amber-800 dark:text-amber-200">
+                <input type="checkbox" checked={ackClinical} onChange={(e) => setAckClinical(e.target.checked)} className="mt-0.5 h-4 w-4 rounded border-amber-300 text-amber-600 focus:ring-amber-500" />
+                I've checked and it's safe to dispense.
+              </label>
+            </div>
+          )}
+
           {short && <div className="text-sm text-amber-600 dark:text-amber-400">Amount tendered is less than the total.</div>}
           {splitMode && !splitOk && cart.length > 0 && <div className="text-sm text-amber-600 dark:text-amber-400">Split must add up to {money(total)}.</div>}
           {overLimit && <div className="text-sm text-rose-600 dark:text-rose-400">This sale exceeds the customer's credit limit.</div>}
           {err && <div className="text-sm text-rose-600 dark:text-rose-400">{err}</div>}
 
-          <button onClick={checkout} disabled={busy || cart.length === 0 || short || overLimit || controlledBlocked || (splitMode && !splitOk) || (hasClinicalWarn && !ackClinical)} className="btn-primary w-full !py-3 text-base">
+          <button onClick={checkout} disabled={busy || cart.length === 0 || short || overLimit || controlledBlocked || (splitMode && !splitOk) || (needsClinicalAck && !ackClinical)} className="btn-primary w-full !py-3 text-base">
             {busy ? <Loader2 className="h-5 w-5 animate-spin" /> : (!splitMode && payment === "account") ? <HandCoins className="h-5 w-5" /> : <CheckCircle2 className="h-5 w-5" />}
             {(!splitMode && payment === "account") ? "Charge to account" : "Complete sale"} · {money(total)}
           </button>

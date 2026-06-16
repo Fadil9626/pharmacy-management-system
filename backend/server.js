@@ -178,11 +178,11 @@ app.patch("/api/promotions/:id", protect, authorize("owner", "manager"), promoti
 app.delete("/api/promotions/:id", protect, authorize("owner", "manager"), promotions.remove);
 app.post("/api/promotions/preview", protect, requireModule("pos"), promotions.preview);
 
-// Clinical safety — allergy + drug-interaction checks
-app.post("/api/clinical/check", protect, clinical.check);
-app.get("/api/clinical/interactions", protect, authorize("owner", "manager"), clinical.listInteractions);
-app.post("/api/clinical/interactions", protect, authorize("owner", "manager"), clinical.addInteraction);
-app.delete("/api/clinical/interactions/:id", protect, authorize("owner", "manager"), clinical.removeInteraction);
+// Clinical safety & dosing (licensable module) — allergy/interaction/condition checks
+app.post("/api/clinical/check", protect, requireModule("clinical"), clinical.check);
+app.get("/api/clinical/interactions", protect, requireModule("clinical"), authorize("owner", "manager"), clinical.listInteractions);
+app.post("/api/clinical/interactions", protect, requireModule("clinical"), authorize("owner", "manager"), clinical.addInteraction);
+app.delete("/api/clinical/interactions/:id", protect, requireModule("clinical"), authorize("owner", "manager"), clinical.removeInteraction);
 
 // Finance — till shifts, cash movements, expenses (licensable module)
 app.get("/api/finance/shift/current", protect, requireModule("finance"), finance.current);
