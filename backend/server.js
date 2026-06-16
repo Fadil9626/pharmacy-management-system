@@ -94,6 +94,7 @@ if (!process.env.JWT_SECRET) {
 app.get("/api/health", (_, res) => res.json({ ok: true }));
 
 app.post("/api/auth/login", auth.login);
+app.post("/api/auth/reset", auth.resetPassword);   // public (token-gated reset page)
 app.post("/api/auth/2fa/verify", auth.verify2fa); // public: second login step (uses ticket)
 app.post("/api/auth/2fa/setup", protect, auth.setup2fa);
 app.post("/api/auth/2fa/enable", protect, auth.enable2fa);
@@ -206,6 +207,7 @@ app.get("/api/users", protect, requirePermission("staff.manage"), users.list);
 app.post("/api/users", protect, requirePermission("staff.manage"), users.create);
 app.patch("/api/users/:id", protect, requirePermission("staff.manage"), users.update);
 app.post("/api/users/:id/reset-password", protect, requirePermission("staff.manage"), users.resetPassword);
+app.post("/api/users/:id/send-reset", protect, requirePermission("staff.manage"), auth.sendResetLink);
 
 // Point of Sale
 app.get("/api/pos/products", protect, requireModule("pos"), sales.sellableProducts);

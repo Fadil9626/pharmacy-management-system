@@ -28,6 +28,7 @@ const Staff = lazyWithRetry(() => import("./pages/Staff.jsx"));
 const Settings = lazyWithRetry(() => import("./pages/Settings.jsx"));
 const Profile = lazyWithRetry(() => import("./pages/Profile.jsx"));
 const Promotions = lazyWithRetry(() => import("./pages/Promotions.jsx"));
+const Reset = lazyWithRetry(() => import("./pages/Reset.jsx"));
 
 // Route table: each page declares the module it needs and the roles allowed.
 // The single source of truth the sidebar nav mirrors.
@@ -90,6 +91,7 @@ export default function App() {
             path="/login"
             element={loading ? <Splash /> : user ? <Navigate to="/" replace /> : <Login />}
           />
+          <Route path="/reset" element={<Reset />} />{/* public: set password from emailed link */}
           <Route
             path="/"
             element={

@@ -3,7 +3,7 @@ import { api } from "../lib/api.js";
 import { useAuth } from "../context/AuthContext.jsx";
 import {
   Users, Plus, X, Loader2, KeyRound, ShieldCheck, UserCog, CheckCircle2, Ban,
-  Shield, Save, Lock, ScrollText, Search, ShieldAlert, FileCheck2,
+  Shield, Save, Lock, ScrollText, Search, ShieldAlert, FileCheck2, Mail,
 } from "lucide-react";
 
 const ROLES = ["owner", "manager", "pharmacist", "cashier"];
@@ -400,23 +400,48 @@ function PasswordModal({ u, onClose, onSaved }) {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
   const [done, setDone] = useState(false);
+  const [sentMsg, setSentMsg] = useState("");
   const save = async (e) => {
     e.preventDefault();
     setBusy(true); setErr("");
     try { await api(`/api/users/${u.id}/reset-password`, { method: "POST", body: { password: pw } }); setDone(true); setTimeout(onSaved, 1200); }
     catch (e) { setErr(e.message); setBusy(false); }
   };
+  const sendLink = async () => {
+    setBusy(true); setErr(""); setSentMsg("");
+    try {
+      const r = await api(`/api/users/${u.id}/send-reset`, { method: "POST" });
+      setSentMsg(`Reset link ${r.delivered ? "emailed" : "queued"} to ${r.email}. It expires in 1 hour.`);
+    } catch (e) { setErr(e.message); } finally { setBusy(false); }
+  };
   return (
     <Modal title={`Reset password · ${u.full_name}`} onClose={onClose}>
       {done ? (
         <div className="flex items-center gap-2 py-4 text-brand-600 dark:text-brand-400"><CheckCircle2 className="h-5 w-5" /> Password updated.</div>
       ) : (
-        <form onSubmit={save} className="space-y-4">
-          <div><label className="label">New password</label><input className="input" value={pw} onChange={(e) => setPw(e.target.value)} required minLength={8} placeholder="Min 8 chars, letters & numbers" autoFocus /></div>
-          {err && <div className="text-sm text-rose-600 dark:text-rose-400">{err}</div>}
-          <div className="flex justify-end gap-2"><button type="button" className="btn-outline" onClick={onClose}>Cancel</button>
-            <button type="submit" className="btn-primary" disabled={busy}>{busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <KeyRound className="h-4 w-4" />} Set password</button></div>
-        </form>
+        <div className="space-y-4">
+          {/* Preferred: email a link so the staff member sets their own password */}
+          <div className="rounded-xl border border-sage-200 p-3 dark:border-sage-800">
+            <div className="text-sm font-medium text-sage-800 dark:text-sage-100">Email a reset link</div>
+            <p className="mt-0.5 text-xs text-sage-500 dark:text-sage-400">{u.email ? `Sends a one-time link to ${u.email} — they set their own password.` : "No email on file for this user — add one to use this."}</p>
+            {sentMsg && <div className="mt-2 flex items-center gap-1.5 text-sm font-medium text-brand-600 dark:text-brand-400"><CheckCircle2 className="h-4 w-4" /> {sentMsg}</div>}
+            <button type="button" className="btn-outline mt-2" onClick={sendLink} disabled={busy || !u.email}>
+              {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Mail className="h-4 w-4" />} Send reset link
+            </button>
+          </div>
+
+          <div className="relative text-center text-xs uppercase tracking-wide text-sage-400">
+            <span className="bg-white px-2 dark:bg-sage-900">or set one directly</span>
+            <div className="absolute left-0 top-1/2 -z-10 h-px w-full bg-sage-200 dark:bg-sage-800" />
+          </div>
+
+          <form onSubmit={save} className="space-y-4">
+            <div><label className="label">Temporary password</label><input className="input" value={pw} onChange={(e) => setPw(e.target.value)} required minLength={8} placeholder="Min 8 chars, letters & numbers" /></div>
+            {err && <div className="text-sm text-rose-600 dark:text-rose-400">{err}</div>}
+            <div className="flex justify-end gap-2"><button type="button" className="btn-outline" onClick={onClose}>Cancel</button>
+              <button type="submit" className="btn-primary" disabled={busy}>{busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <KeyRound className="h-4 w-4" />} Set password</button></div>
+          </form>
+        </div>
       )}
     </Modal>
   );

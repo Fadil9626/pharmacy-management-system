@@ -7,6 +7,9 @@ const totp = require("../lib/totp");
 const { bumpTokenVersion } = require("../middleware/auth");
 const { validatePassword } = require("../lib/passwordPolicy");
 const { logAudit } = require("../lib/audit");
+const { notify } = require("../lib/notify");
+const crypto = require("crypto");
+const sha256 = (s) => crypto.createHash("sha256").update(String(s)).digest("hex");
 
 // Issue the full session token (embeds token_version for revocation) + user payload.
 async function issueSession(user, res) {
@@ -193,6 +196,53 @@ exports.changePassword = async (req, res) => {
     );
     logAudit(req, "password_change", "user", req.user.id, null);
     res.json({ success: true, token });
+  } catch (e) {
+    res.status(500).json({ message: e.message });
+  }
+};
+
+// Owner/manager emails a staff member a password-reset link. They set their own
+// new password from the link — the admin never sees it.
+exports.sendResetLink = async (req, res) => {
+  const id = Number(req.params.id);
+  try {
+    const u = (await pool.query("SELECT id, email, full_name FROM users WHERE id = $1 AND is_active = true", [id])).rows[0];
+    if (!u) return res.status(404).json({ message: "User not found" });
+    if (!u.email) return res.status(400).json({ message: "This user has no email on file — add one, or use 'Set temporary password' instead." });
+    const token = crypto.randomBytes(32).toString("hex");
+    await pool.query("UPDATE users SET reset_token_hash = $1, reset_expires_at = NOW() + INTERVAL '1 hour' WHERE id = $2", [sha256(token), u.id]);
+    const origin = req.headers.origin || `${req.protocol}://${req.headers.host}`;
+    const link = `${origin}/reset?token=${token}`;
+    const sent = await notify({
+      channel: "email", to: u.email, type: "password_reset", ref_type: "user", ref_id: u.id,
+      subject: "Set your Remedy password",
+      body: `Hello ${u.full_name || "there"},\n\nUse this link to set your password (valid for 1 hour):\n${link}\n\nIf you didn't expect this, contact your manager.`,
+    });
+    logAudit(req, "password_reset_sent", "user", id, { email: u.email });
+    res.json({ ok: true, email: u.email, delivered: sent.status === "sent" });
+  } catch (e) {
+    res.status(500).json({ message: e.message });
+  }
+};
+
+// Complete a reset with a valid token.
+exports.resetPassword = async (req, res) => {
+  const { token, new_password } = req.body || {};
+  if (!token) return res.status(400).json({ message: "Missing reset token" });
+  const pwErr = validatePassword(new_password);
+  if (pwErr) return res.status(400).json({ message: pwErr });
+  try {
+    const u = (await pool.query(
+      "SELECT id FROM users WHERE reset_token_hash = $1 AND reset_expires_at > NOW()", [sha256(token)]
+    )).rows[0];
+    if (!u) return res.status(400).json({ message: "This reset link is invalid or has expired — request a new one." });
+    const hash = await bcrypt.hash(new_password, 10);
+    const { rows } = await pool.query(
+      "UPDATE users SET password_hash = $1, reset_token_hash = NULL, reset_expires_at = NULL, token_version = token_version + 1 WHERE id = $2 RETURNING token_version",
+      [hash, u.id]
+    );
+    bumpTokenVersion(u.id, rows[0].token_version);
+    res.json({ ok: true });
   } catch (e) {
     res.status(500).json({ message: e.message });
   }
