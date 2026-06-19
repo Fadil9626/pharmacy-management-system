@@ -22,9 +22,14 @@ if [ ! -f backend/.env ]; then
 fi
 
 # 2. Latest code ----------------------------------------------
+# Mirror the current branch to its remote exactly, so a local/pasted change can't
+# conflict with the pull. .env and node_modules are git-ignored, so this never
+# touches secrets or installed deps. Pass --no-pull to deploy local changes.
 if [ "${1:-}" != "--no-pull" ] && [ -d .git ]; then
-  say "Pulling latest code"
-  git pull --ff-only
+  BRANCH="$(git rev-parse --abbrev-ref HEAD)"
+  say "Syncing to origin/$BRANCH"
+  git fetch origin --prune
+  git reset --hard "origin/$BRANCH"
 fi
 
 # 3. Database (Docker PostgreSQL) -----------------------------
