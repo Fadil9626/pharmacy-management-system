@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useLocation } from "react-router-dom";
 import { api } from "../lib/api.js";
 import { useAuth } from "../context/AuthContext.jsx";
 import { money } from "../lib/money.js";
@@ -63,6 +64,8 @@ export default function POS() {
   const [clinical, setClinical] = useState(null);
   const [ackClinical, setAckClinical] = useState(false);
   const [showCalc, setShowCalc] = useState(false);
+  const location = useLocation();
+  const [fillRx, setFillRx] = useState(() => location.state?.fillRx || null); // filling a prescription
   const searchRef = useRef(null);
   const posRef = useRef(null);
 
@@ -88,6 +91,24 @@ export default function POS() {
     }, 250);
     return () => clearTimeout(id);
   }, [cart]);
+
+  // Seed the cart from a prescription ("Sell in POS" on the Rx page). Match each
+  // linked product to the live catalogue so price/stock are current; the sale
+  // records the dispense/refill on completion (see checkout).
+  useEffect(() => {
+    if (!fillRx || !products || cart.length) return;
+    const lines = []; let missing = 0;
+    for (const it of fillRx.items || []) {
+      const p = products.find((x) => x.id === it.product_id);
+      const qty = p ? Math.min(Math.max(1, Number(it.qty) || 1), p.stock || 0) : 0;
+      if (!p || qty <= 0) { missing++; continue; }
+      lines.push({ id: p.id, name: p.name, price: p.price, unit: p.unit, stock: p.stock, qty, is_controlled: p.is_controlled });
+    }
+    if (lines.length) setCart(lines);
+    if (fillRx.patient_name && !customer) setCustomer(fillRx.patient_name);
+    if (missing) setErr(`${missing} prescribed item(s) couldn't be added (not stocked or out of stock).`);
+    window.history.replaceState({}, "");   // don't re-seed on refresh
+  }, [fillRx, products]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Live clinical safety check — allergies + interactions + condition flags.
   useEffect(() => {
@@ -349,6 +370,14 @@ export default function POS() {
       if (!navigator.onLine) { await goOffline(customer || custObj?.name || "Walk-in"); return; }
       const res = await api("/api/sales", { method: "POST", body: payload });
       setReceipt(res);
+      // If this sale was filling a prescription, record the dispense/refill now
+      // that the medication has actually been sold. Best-effort: the sale stands
+      // regardless (stock + payment already committed).
+      if (fillRx) {
+        try { await api(`/api/prescriptions/${fillRx.id}/dispense`, { method: "POST" }); }
+        catch { /* sale succeeded; refill record is best-effort */ }
+        setFillRx(null);
+      }
       resetSale();
       load();
     } catch (e) {
@@ -373,6 +402,15 @@ export default function POS() {
     <div className={`grid ${isFs ? "h-[calc(100vh-2rem)]" : "h-[calc(100vh-7rem)]"} grid-cols-1 gap-5 lg:grid-cols-[1fr_400px]`}>
       {/* Catalogue */}
       <div className="flex min-h-0 flex-col">
+        {fillRx && (
+          <div className="mb-3 flex flex-wrap items-center gap-2 rounded-xl border border-brand-300 bg-brand-50 px-3 py-2 text-sm dark:border-brand-900/50 dark:bg-brand-900/20">
+            <ShoppingCart className="h-4 w-4 text-brand-600" />
+            <span className="font-medium text-brand-700 dark:text-brand-300">Filling {fillRx.rx_number}{fillRx.patient_name ? ` — ${fillRx.patient_name}` : ""}</span>
+            <span className="text-xs text-sage-500 dark:text-sage-400">the dispense/refill is recorded when you complete this sale</span>
+            <div className="flex-1" />
+            <button onClick={() => setFillRx(null)} className="btn-outline !px-3 !py-1 text-xs">Unlink</button>
+          </div>
+        )}
         {(!online || fromCache || pending > 0 || syncMsg) && (
           <div className={`mb-3 flex flex-wrap items-center gap-2 rounded-xl border px-3 py-2 text-sm ${
             online ? "border-sage-200 bg-white dark:border-sage-800 dark:bg-sage-900"

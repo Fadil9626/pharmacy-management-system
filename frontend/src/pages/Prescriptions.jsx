@@ -1,11 +1,12 @@
 import { useEffect, useMemo, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { api } from "../lib/api.js";
 import { useAuth } from "../context/AuthContext.jsx";
 import { printLabels, baseWarnings } from "../lib/printing.js";
 import ClinicalWarnings from "../components/ClinicalWarnings.jsx";
 import {
   ClipboardList, Plus, Search, Loader2, X, Trash2, ArrowLeft,
-  Stethoscope, User, CheckCircle2, Ban, Pill, RefreshCw, Tag,
+  Stethoscope, User, CheckCircle2, Ban, Pill, RefreshCw, Tag, ShoppingCart,
 } from "lucide-react";
 
 const STATUS = {
@@ -185,6 +186,7 @@ function RxDetail({ id, onBack }) {
   const [err, setErr] = useState("");
   const [busy, setBusy] = useState(false);
   const [clinical, setClinical] = useState(null);
+  const navigate = useNavigate();
   const load = () => api(`/api/prescriptions/${id}`).then(setRx).catch((e) => setErr(e.message));
 
   const printRxLabels = () => {
@@ -219,6 +221,10 @@ function RxDetail({ id, onBack }) {
   if (err) return <div className="card border-rose-200 p-4 text-sm text-rose-600">{err}</div>;
   if (!rx) return <div className="flex h-40 items-center justify-center text-sage-400"><Loader2 className="h-5 w-5 animate-spin" /></div>;
   const canRefill = rx.status === "dispensed" && rx.refills_used < rx.refills_allowed;
+  // Items linked to a stock product can be sold in POS; the sale records the
+  // dispense/refill on completion.
+  const sellable = (rx.items || []).filter((it) => it.product_id).map((it) => ({ product_id: it.product_id, qty: it.quantity }));
+  const sellInPos = () => navigate("/pos", { state: { fillRx: { id, rx_number: rx.rx_number, patient_name: rx.patient_name, items: sellable } } });
 
   return (
     <div className="mx-auto max-w-3xl space-y-6">
@@ -237,8 +243,11 @@ function RxDetail({ id, onBack }) {
         </div>
         <div className="flex gap-2">
           {rx.items?.length > 0 && <button className="btn-outline" onClick={printRxLabels}><Tag className="h-4 w-4" /> Print labels</button>}
-          {rx.status === "pending" && <button className="btn-primary" disabled={busy} onClick={() => act("dispense")}><CheckCircle2 className="h-4 w-4" /> Dispense</button>}
-          {canRefill && <button className="btn-primary" disabled={busy} onClick={() => act("dispense")}><RefreshCw className="h-4 w-4" /> Dispense refill</button>}
+          {(rx.status === "pending" || canRefill) && sellable.length > 0 && (
+            <button className="btn-primary" onClick={sellInPos}><ShoppingCart className="h-4 w-4" /> {canRefill ? "Sell refill in POS" : "Sell in POS"}</button>
+          )}
+          {rx.status === "pending" && <button className="btn-outline" disabled={busy} onClick={() => act("dispense")}><CheckCircle2 className="h-4 w-4" /> Mark dispensed</button>}
+          {canRefill && <button className="btn-outline" disabled={busy} onClick={() => act("dispense")}><RefreshCw className="h-4 w-4" /> Record refill</button>}
           {rx.status !== "dispensed" && rx.status !== "cancelled" && <button className="btn-outline text-rose-500" disabled={busy} onClick={() => act("cancel")}><Ban className="h-4 w-4" /> Cancel</button>}
         </div>
       </div>
