@@ -92,17 +92,24 @@ exports.dispense = async (req, res) => {
   try {
     const cur = await pool.query("SELECT status, refills_allowed, refills_used FROM prescriptions WHERE id = $1", [id]);
     if (!cur.rows.length) return res.status(404).json({ message: "Prescription not found" });
-    if (cur.rows[0].status === "cancelled") return res.status(400).json({ message: "This prescription was cancelled" });
+    const { status, refills_allowed, refills_used } = cur.rows[0];
+    if (status === "cancelled") return res.status(400).json({ message: "This prescription was cancelled" });
+
+    // A dispense against an already-dispensed prescription is a refill — it only
+    // qualifies while refills remain. Enforce the limit here (not just in the UI)
+    // so a direct API call / double-click can't over-dispense.
+    const isRefill = status === "dispensed";
+    if (isRefill && refills_used >= refills_allowed) {
+      return res.status(400).json({ message: "No refills remaining on this prescription" });
+    }
 
     await pool.query("UPDATE prescription_items SET dispensed_qty = quantity WHERE prescription_id = $1", [id]);
-    // A dispense consumes a refill if any remain and it was already dispensed once.
-    const usedRefill = cur.rows[0].status === "dispensed" && cur.rows[0].refills_used < cur.rows[0].refills_allowed;
     const { rows } = await pool.query(
       `UPDATE prescriptions SET
          status = 'dispensed', dispensed_by = $1, dispensed_at = NOW(),
          refills_used = refills_used + $2
        WHERE id = $3 RETURNING status, refills_used, refills_allowed`,
-      [req.user.id, usedRefill ? 1 : 0, id]
+      [req.user.id, isRefill ? 1 : 0, id]
     );
     res.json({ success: true, ...rows[0] });
   } catch (e) {
