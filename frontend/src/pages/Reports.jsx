@@ -3,7 +3,7 @@ import { api } from "../lib/api.js";
 import {
   TrendingUp, Wallet, Receipt, Percent, Loader2, CalendarClock,
   Boxes, Banknote, CreditCard, Smartphone, Trophy, AlertTriangle,
-  Download, Tag, UserRound, Clock, Undo2, GitBranch, Activity, Landmark, Mail,
+  Download, Tag, UserRound, Clock, Undo2, GitBranch, Activity, Landmark, Mail, Trash2, FileText,
 } from "lucide-react";
 import { money, money0, num } from "../lib/money.js";
 import { downloadCSV } from "../lib/csv.js";
@@ -45,6 +45,15 @@ export default function Reports() {
   const [vat, setVat] = useState(null);
   const [emailBusy, setEmailBusy] = useState(false);
   const [emailMsg, setEmailMsg] = useState("");
+  // The disposal register. Not date-filtered with the rest of this page: an
+  // inspector asks "show me the last disposals", not "show me April's", and a
+  // register that hides everything outside the current filter is the wrong
+  // shape for the question it exists to answer.
+  const [disposals, setDisposals] = useState(null);
+
+  useEffect(() => {
+    api("/api/disposals").then(setDisposals).catch(() => setDisposals([]));
+  }, []);
 
   useEffect(() => {
     setSales(null);
@@ -406,6 +415,69 @@ export default function Reports() {
                     <td className="py-2"><span className="chip bg-rose-100 text-rose-700 dark:bg-rose-900/40 dark:text-rose-300">{r.indicator}</span></td>
                     <td className="py-2 text-right font-semibold text-sage-900 dark:text-sage-50">{num(r.cases)}</td>
                     <td className="py-2 text-right text-sage-500 dark:text-sage-400">{num(r.units)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+
+      {/* Disposal register — what was destroyed, when, and on whose authority */}
+      <div className="card p-6">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="flex items-center gap-2">
+            <Trash2 className="h-5 w-5 text-rose-600" />
+            <h2 className="font-display text-lg font-semibold text-sage-900 dark:text-sage-50">Disposal register</h2>
+          </div>
+          {disposals?.length > 0 && (
+            <span className="text-sm text-sage-500 dark:text-sage-400">
+              {money(disposals.reduce((a, d) => a + Number(d.total_cost || 0), 0))} written off across {disposals.length} disposal{disposals.length === 1 ? "" : "s"}
+            </span>
+          )}
+        </div>
+
+        {!disposals && <Empty label="Loading…" />}
+        {disposals?.length === 0 && <Empty label="Nothing has been disposed of yet." />}
+
+        {disposals?.length > 0 && (
+          <div className="mt-4 overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-sage-200 text-left text-xs uppercase text-sage-500 dark:border-sage-800">
+                  <th className="py-2 pr-3">Ref</th>
+                  <th className="py-2 pr-3">Date</th>
+                  <th className="py-2 pr-3">Reason</th>
+                  <th className="py-2 pr-3">By</th>
+                  <th className="py-2 pr-3">Witness</th>
+                  <th className="py-2 pr-3 text-right">Lines</th>
+                  <th className="py-2 pr-3 text-right">Units</th>
+                  <th className="py-2 pr-3 text-right">Value</th>
+                  <th className="py-2"></th>
+                </tr>
+              </thead>
+              <tbody>
+                {disposals.map((d) => (
+                  <tr key={d.id} className="border-b border-sage-100 dark:border-sage-800/60">
+                    <td className="py-2 pr-3 font-mono text-xs text-sage-800 dark:text-sage-100">{d.ref}</td>
+                    <td className="py-2 pr-3 text-sage-500 dark:text-sage-400">{new Date(d.created_at).toLocaleDateString()}</td>
+                    <td className="py-2 pr-3 capitalize text-sage-700 dark:text-sage-200">{d.reason}</td>
+                    <td className="py-2 pr-3 text-sage-500 dark:text-sage-400">{d.disposed_by || "—"}</td>
+                    {/* Blank is meaningful here: it says no witness was named,
+                        which for a controlled drug is the thing being looked for. */}
+                    <td className="py-2 pr-3 text-sage-500 dark:text-sage-400">{d.witness_name || "—"}</td>
+                    <td className="py-2 pr-3 text-right tabular-nums text-sage-500">{d.lines}</td>
+                    <td className="py-2 pr-3 text-right tabular-nums text-sage-700 dark:text-sage-200">{num(d.total_units)}</td>
+                    <td className="py-2 pr-3 text-right tabular-nums font-semibold text-sage-900 dark:text-sage-50">{money(d.total_cost)}</td>
+                    <td className="py-2 text-right">
+                      <a
+                        href={`/api/disposals/${d.id}/certificate.pdf`}
+                        target="_blank" rel="noreferrer"
+                        className="inline-flex items-center gap-1 text-xs font-semibold text-brand-600 hover:underline dark:text-brand-400"
+                      >
+                        <FileText className="h-3.5 w-3.5" /> Certificate
+                      </a>
+                    </td>
                   </tr>
                 ))}
               </tbody>
