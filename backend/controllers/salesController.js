@@ -1,3 +1,4 @@
+const { totalsFor } = require("../lib/saleMath");
 const pool = require("../config/db");
 const { pricingContext, effectivePrice } = require("../lib/pricing");
 const { effectiveBranch, moduleOn } = require("../lib/context");
@@ -160,10 +161,22 @@ exports.createSale = async (req, res) => {
       throw new Error("You don't have permission to apply discounts");
     // Auto-applied promotions (server-authoritative — recomputed, never trusted from the client).
     const promo = await evaluatePromotions(client, lines);
-    const disc = Math.min(subtotal, manualDisc + promo.discount);
-    const taxable = Math.max(0, subtotal - disc);
-    const tax = Math.round(taxable * (taxPct / 100) * 100) / 100;
-    const total = taxable + tax;
+    // The arithmetic lives in lib/saleMath so it can be tested without a
+    // database or a till. Same order as before — tax on the discounted amount,
+    // discount capped at the subtotal — with the total now rounded rather than
+    // left as taxable + tax, which could reach the ledger as 22.990000000000002.
+    const totals = totalsFor({
+      lines,
+      manualDiscount: manualDisc,
+      promoDiscount: promo.discount,
+      taxPercent: taxPct,
+    });
+    const { discount: disc, taxable, tax, total } = totals;
+    // Take the rounded subtotal back too, rather than keeping the one
+    // accumulated in the loop above. They agree on every ordinary cart, but two
+    // sources for one figure is how they stop agreeing — and the loop's version
+    // is a raw sum that can carry float noise into the ledger.
+    subtotal = totals.subtotal;
 
     // Resolve the tender — either a split [{method, amount}] or a single method.
     let payments = Array.isArray(req.body.payments) && req.body.payments.length
