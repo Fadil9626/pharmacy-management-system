@@ -91,7 +91,14 @@ export function applyThemeConfig(cfg) {
   }
   if (c.topbar_bg) {
     setVar("--topbar-bg", triplet(c.topbar_bg));
-    setVar("--topbar-text", triplet(c.topbar_text || "#0f172a"));
+    // Derive the default from the background, the way --sidebar-hover above
+    // already does. This used to fall back to #0f172a unconditionally: set a
+    // dark topbar without also setting topbar_text and every icon that takes
+    // its colour from this variable became near-black on near-black. The
+    // branch switcher stayed readable only because it carries its own
+    // dark:text-sage-100 and never reads this at all — which is why the topbar
+    // looked fine until something new was put next to it.
+    setVar("--topbar-text", triplet(c.topbar_text || (isLight(c.topbar_bg) ? "#0f172a" : "#ffffff")));
   }
 
   try { localStorage.setItem("remedy-brand-css", css); } catch {}
