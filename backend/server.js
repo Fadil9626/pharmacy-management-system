@@ -59,7 +59,11 @@ if (!process.env.JWT_SECRET) {
 }
 
 // ── Migrations + default admin on boot ──────────────────────
-(async () => {
+// Held as a promise rather than left to run loose. Anything that reads a table
+// this block creates has to wait for it — see the update checks at the bottom,
+// which used to race it and ask for a setting out of a table that did not exist
+// yet.
+const dbReady = (async () => {
   try {
     await pool.query("SELECT NOW()");
     const dir = path.join(__dirname, "migrations");
@@ -305,8 +309,23 @@ if (fs.existsSync(dist)) {
 const PORT = process.env.PORT || 5190;
 app.listen(PORT, "0.0.0.0", () => console.log(`🩺 Remedy API on http://0.0.0.0:${PORT}`));
 
-// Ask Control Center what version this install should be running. Failures are
-// logged and retried, never fatal: a pharmacy must keep selling when the vendor
-// is unreachable.
-updates.startUpdateChecks().catch((e) => console.warn("[updates] check loop:", e.message));
-updates.startMaintenanceWatch().catch((e) => console.warn("[updates] maintenance watch:", e.message));
+// Ask Control Center what version this install should be running.
+//
+// Started only after the migrations have finished. The first check reads
+// control_center_url from system_settings, and that table is created by those
+// migrations — so on a cold boot the check would fire first, fail with
+// 'relation "system_settings" does not exist', and silently fall back to the
+// environment. Harmless where the environment happens to agree, and wrong the
+// moment an operator has set the address in the database instead.
+//
+// Waiting on the promise rather than sleeping: a guessed delay is right until
+// the day a migration or a cold Postgres takes longer than the guess.
+//
+// Failures after that are logged and retried, never fatal — a pharmacy must
+// keep selling when the vendor is unreachable.
+dbReady
+  .then(() => {
+    updates.startUpdateChecks().catch((e) => console.warn("[updates] check loop:", e.message));
+    updates.startMaintenanceWatch().catch((e) => console.warn("[updates] maintenance watch:", e.message));
+  })
+  .catch(() => { /* the migration block exits the process itself */ });
