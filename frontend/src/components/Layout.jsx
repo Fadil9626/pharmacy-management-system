@@ -9,7 +9,7 @@ import {
   Pill, Plus, LayoutDashboard, Boxes, ShoppingCart, Receipt, Truck, FileText,
   Users, ClipboardList, ShieldAlert, Wallet, GitBranch, Moon, Sun,
   LogOut, Menu, X, Settings as SettingsIcon, UserCog, TrendingUp, PanelLeft,
-  ShieldCheck, ChevronDown, Tag,
+  ShieldCheck, ChevronDown, Tag, Bell, PackageX, CalendarClock, RefreshCw,
 } from "lucide-react";
 
 // nav item → required module key (null = always visible). "soon" items render disabled.
@@ -75,6 +75,114 @@ function Brand({ name, logo, collapsed }) {
         <span className="truncate font-display text-xl font-semibold tracking-tight text-[rgb(var(--sidebar-text))]">
           {name || "Remedy"}
         </span>
+      )}
+    </div>
+  );
+}
+
+
+// ── Header bell ─────────────────────────────────────────────────────────────
+//
+// Reads /api/alerts/summary, which counts what is true right now rather than
+// what has already been emailed. The notifications table is an outbox and is
+// only written when a delivery channel is configured, so a bell over it would
+// read zero on exactly the pharmacy that never set up SMTP and has forty
+// expiring batches.
+//
+// Polled every five minutes and on window focus. Stock does not change fast
+// enough to justify more, and a counter machine is left open all day.
+function AlertBell() {
+  const navigate = useNavigate();
+  const [data, setData] = useState(null);
+  const [open, setOpen] = useState(false);
+
+  const load = () => api("/api/alerts/summary").then(setData).catch(() => {});
+
+  useEffect(() => {
+    load();
+    const t = setInterval(load, 5 * 60 * 1000);
+    const onFocus = () => load();
+    window.addEventListener("focus", onFocus);
+    return () => { clearInterval(t); window.removeEventListener("focus", onFocus); };
+  }, []);
+
+  const c = data?.counts;
+  const total = c ? c.low_stock + c.near_expiry + c.expired + c.refill_due : 0;
+  // Expired stock is the one that must not be sold at all, so it is the only
+  // thing that turns the badge red.
+  const urgent = (c?.expired || 0) > 0;
+
+  const go = (path) => { setOpen(false); navigate(path); };
+
+  const Row = ({ icon: Icon, tone, label, n, onClick }) => {
+    if (!n) return null;
+    return (
+      <button onClick={onClick}
+        className="flex w-full items-center gap-3 rounded-lg px-3 py-2 text-left transition hover:bg-sage-100 dark:hover:bg-sage-800">
+        <Icon className={`h-4 w-4 shrink-0 ${tone}`} />
+        <span className="flex-1 text-sm text-sage-700 dark:text-sage-200">{label}</span>
+        <span className="text-sm font-bold text-sage-900 dark:text-sage-50">{n}</span>
+      </button>
+    );
+  };
+
+  return (
+    <div className="relative">
+      <button
+        onClick={() => { setOpen((o) => !o); load(); }}
+        aria-label={total ? `${total} alerts` : "Alerts"}
+        className="btn-ghost relative !px-2.5 !py-2 !text-[rgb(var(--topbar-text))]"
+      >
+        <Bell className="h-5 w-5" />
+        {total > 0 && (
+          <span className={`absolute -right-0.5 -top-0.5 grid min-w-[18px] place-items-center rounded-full px-1 text-[10px] font-bold text-white ${urgent ? "bg-rose-600" : "bg-amber-500"}`}>
+            {total > 99 ? "99+" : total}
+          </span>
+        )}
+      </button>
+
+      {open && (
+        <>
+          <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} />
+          <div className="absolute right-0 top-full z-50 mt-2 w-72 rounded-xl border border-sage-200 bg-white p-1.5 shadow-lg dark:border-sage-800 dark:bg-sage-900">
+            <div className="px-3 py-2">
+              <p className="text-sm font-semibold text-sage-900 dark:text-sage-50">Needs attention</p>
+            </div>
+
+            {!data && (
+              <p className="px-3 pb-3 text-sm text-sage-500">Checking&hellip;</p>
+            )}
+
+            {data && total === 0 && (
+              <p className="px-3 pb-3 text-sm text-sage-500">
+                Nothing to flag &mdash; stock levels and expiry dates are all fine.
+              </p>
+            )}
+
+            {data && (
+              <>
+                <Row icon={PackageX} tone="text-rose-600"
+                     label="Expired batches still in stock" n={c.expired}
+                     onClick={() => go("/inventory")} />
+                <Row icon={CalendarClock} tone="text-amber-600"
+                     label={`Expiring within ${data.near_expiry_months} months`} n={c.near_expiry}
+                     onClick={() => go("/inventory")} />
+                <Row icon={Boxes} tone="text-amber-600"
+                     label="At or below reorder level" n={c.low_stock}
+                     onClick={() => go("/inventory")} />
+                <Row icon={RefreshCw} tone="text-brand-600"
+                     label="Prescriptions due a refill" n={c.refill_due}
+                     onClick={() => go("/prescriptions")} />
+              </>
+            )}
+
+            {data && c.expired > 0 && (
+              <p className="border-t border-sage-100 px-3 py-2 text-xs text-rose-600 dark:border-sage-800">
+                Expired stock must not be sold. Remove it from the shelf before anything else here.
+              </p>
+            )}
+          </div>
+        </>
       )}
     </div>
   );
@@ -176,6 +284,7 @@ export default function Layout() {
           </button>
           <div className="flex-1" />
           {moduleEnabled("branches") && (user?.role === "owner" || user?.role === "manager") && <BranchSwitcher />}
+          <AlertBell />
           <button onClick={toggle} className="btn-ghost !px-2.5 !py-2 !text-[rgb(var(--topbar-text))]" aria-label="Toggle theme">
             {theme === "dark" ? <Sun className="h-5 w-5" /> : <Moon className="h-5 w-5" />}
           </button>

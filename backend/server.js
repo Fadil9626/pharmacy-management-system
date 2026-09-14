@@ -34,6 +34,7 @@ const purchasing = require("./controllers/purchasingController");
 const reports = require("./controllers/reportsController");
 const publicHealth = require("./controllers/publicHealthController");
 const notifications = require("./controllers/notificationsController");
+const alerts = require("./controllers/alertsController");
 const promotions = require("./controllers/promotionsController");
 const clinical = require("./controllers/clinicalController");
 const rtv = require("./controllers/rtvController");
@@ -155,6 +156,10 @@ app.get("/api/audit", protect, authorize("owner", "manager"), audit.list);
 app.get("/api/audit/verify", protect, authorize("owner", "manager"), audit.verify);
 
 // Notifications — outbox, channel config, test, and the alert scan
+// Header bell. Any signed-in user, because a counter assistant who cannot see
+// that a batch expired tomorrow is the person most likely to sell it.
+app.get("/api/alerts/summary", protect, alerts.summary);
+
 app.get("/api/notifications", protect, authorize("owner", "manager"), notifications.list);
 app.get("/api/notifications/config", protect, authorize("owner", "manager"), notifications.getConfig);
 app.put("/api/notifications/config", protect, authorize("owner"), notifications.saveConfig);
