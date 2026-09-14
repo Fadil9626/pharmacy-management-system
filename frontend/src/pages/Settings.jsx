@@ -9,6 +9,7 @@ import {
   Loader2, Save, Store, Coins, Percent, ReceiptText, CheckCircle2,
   Boxes, Star, Blocks, Lock, Globe, Mail, Phone, MapPin,
   Palette, ImagePlus, Trash2, Check, Bell, Send, Play, MessageSquare,
+  Download, ShieldCheck, AlertTriangle, RefreshCw,
 } from "lucide-react";
 
 const FIELD_FALLBACK = {
@@ -31,6 +32,7 @@ const TABS = [
   { key: "receipt", label: "Receipt", icon: ReceiptText },
   { key: "notifications", label: "Notifications", icon: Bell },
   { key: "modules", label: "Modules", icon: Blocks },
+  { key: "updates", label: "Software Updates", icon: Download },
 ];
 
 // human label for a module key
@@ -221,9 +223,11 @@ export default function Settings() {
 
         {tab === "modules" && <ModulesPanel modules={modules} />}
 
+        {tab === "updates" && <UpdatesTab isOwner={hasRole("owner")} />}
+
         {err && <div className="card border-rose-200 p-3 text-sm text-rose-600 dark:border-rose-900/50 dark:text-rose-300">{err}</div>}
 
-        {canEdit && tab !== "modules" && tab !== "notifications" && (
+        {canEdit && tab !== "modules" && tab !== "notifications" && tab !== "updates" && (
           <div className="flex items-center gap-3">
             <button type="submit" className="btn-primary" disabled={busy}>
               {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />} Save settings
@@ -690,6 +694,206 @@ function Field({ label, icon: Icon, children }) {
     <div>
       <label className="label flex items-center gap-1.5">{Icon && <Icon className="h-3.5 w-3.5 text-sage-400" />}{label}</label>
       {children}
+    </div>
+  );
+}
+
+// ── Software Updates ────────────────────────────────────────────────────────
+//
+// Shows what this install is running and what the vendor says it should be
+// running. The verification has already happened on the server: a release is
+// only ever shown here after its signature checked against this install's own
+// public key, its product matched, and its repository matched the pin. Nothing
+// unverified reaches this screen, and nothing on this screen can install
+// anything by itself — the button writes a request that a root-owned service
+// picks up and verifies again.
+function UpdatesTab({ isOwner }) {
+  const [state, setState] = useState(null);
+  const [status, setStatus] = useState(null);
+  const [busy, setBusy] = useState("");
+  const [err, setErr] = useState("");
+  const [confirming, setConfirming] = useState(false);
+
+  const load = async () => {
+    try {
+      const [s, st] = await Promise.all([
+        api("/api/updates"),
+        api("/api/updates/status").catch(() => null),
+      ]);
+      setState(s); setStatus(st);
+    } catch (e) { setErr(e.message); }
+  };
+
+  useEffect(() => {
+    load();
+    // While an install is running the spool result is the only place progress
+    // shows, so poll — but only then, not forever.
+    const t = setInterval(() => { if (status?.state === "queued" || status?.state === "running") load(); }, 5000);
+    return () => clearInterval(t);
+  }, [status?.state]);
+
+  if (!state && !err) {
+    return <div className="flex h-32 items-center justify-center text-sage-400"><Loader2 className="h-5 w-5 animate-spin" /></div>;
+  }
+
+  const check = async () => {
+    setBusy("check"); setErr("");
+    try { setState(await api("/api/updates/check", { method: "POST" })); }
+    catch (e) { setErr(e.message); } finally { setBusy(""); }
+  };
+
+  const install = async () => {
+    setBusy("install"); setErr(""); setConfirming(false);
+    try {
+      const r = await api("/api/updates/install", { method: "POST" });
+      if (r?.ok === false) setErr(r.reason || "The update could not be queued.");
+      await load();
+    } catch (e) { setErr(e.message); } finally { setBusy(""); }
+  };
+
+  const u = state?.update;
+  const queued = status?.state === "queued" || status?.state === "running";
+
+  return (
+    <div className="space-y-4">
+      <div className="rounded-xl border border-sage-200 p-4">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <p className="text-sm font-semibold text-sage-900">This pharmacy is running</p>
+            <p className="mt-1 text-2xl font-bold text-sage-900">
+              {state?.current?.version || "unknown"}
+            </p>
+            <p className="text-xs text-sage-500">
+              {state?.current?.commit
+                ? <>build <span className="font-mono">{String(state.current.commit).slice(0, 9)}</span></>
+                : "no build stamp — this install was not deployed by deploy.sh"}
+              {state?.checked_at && <> · checked {new Date(state.checked_at).toLocaleString()}</>}
+            </p>
+          </div>
+          <button
+            type="button" onClick={check} disabled={!!busy}
+            className="inline-flex items-center gap-2 rounded-lg border border-sage-300 px-3 py-2 text-sm font-semibold text-sage-700 hover:bg-sage-50 disabled:opacity-60"
+          >
+            {busy === "check" ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
+            Check now
+          </button>
+        </div>
+      </div>
+
+      {err && (
+        <div className="flex items-start gap-2 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" /><span>{err}</span>
+        </div>
+      )}
+
+      {state && state.ok === false && state.error && (
+        <div className="flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
+          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+          <span>Could not reach the vendor: {state.error}. The pharmacy keeps working; this only means the version cannot be confirmed right now.</span>
+        </div>
+      )}
+
+      {/* An offer that arrived but failed verification is worth showing, not
+          hiding: it is the difference between "nothing new" and "something
+          claimed to be new and was refused". */}
+      {state?.rejected && (
+        <div className="flex items-start gap-2 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+          <span>An update was offered and <strong>refused</strong>: {state.rejected.reason}. Nothing was installed. Tell your vendor.</span>
+        </div>
+      )}
+
+      {queued && (
+        <div className="flex items-start gap-2 rounded-lg border border-blue-200 bg-blue-50 p-3 text-sm text-blue-800">
+          <Loader2 className="mt-0.5 h-4 w-4 shrink-0 animate-spin" />
+          <span>
+            Update queued. It is applied by a background service, usually within five minutes, and the
+            pharmacy will be briefly unavailable while it restarts. You can close this page.
+          </span>
+        </div>
+      )}
+
+      {!queued && u && (
+        <div className="rounded-xl border border-emerald-300 bg-emerald-50/60 p-4">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div className="min-w-0">
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="text-lg font-bold text-sage-900">Version {u.version}</span>
+                {u.severity === "security" && (
+                  <span className="rounded bg-red-600 px-2 py-0.5 text-xs font-bold uppercase text-white">Security</span>
+                )}
+                <span className="inline-flex items-center gap-1 text-xs font-semibold text-emerald-700">
+                  <ShieldCheck className="h-3.5 w-3.5" /> Signature verified
+                </span>
+              </div>
+              {u.notes && (
+                <p className="mt-2 max-w-prose whitespace-pre-line text-sm text-sage-700">{u.notes}</p>
+              )}
+              {u.notes && u.notes_verified === false && (
+                <p className="mt-1 text-xs text-sage-500">
+                  These notes came with the release but are not covered by the signature.
+                </p>
+              )}
+              <p className="mt-2 text-xs text-sage-500">
+                A database backup is taken first. If the system does not come back healthy the update is
+                undone automatically.
+                {u.has_migrations && " This release changes the database."}
+              </p>
+            </div>
+
+            {isOwner ? (
+              confirming ? (
+                <div className="flex shrink-0 items-center gap-2">
+                  <button type="button" onClick={() => setConfirming(false)}
+                    className="rounded-lg border border-sage-300 px-3 py-2 text-sm font-semibold text-sage-600">
+                    Cancel
+                  </button>
+                  <button type="button" onClick={install} disabled={!!busy}
+                    className="inline-flex items-center gap-2 rounded-lg bg-emerald-600 px-4 py-2 text-sm font-bold text-white hover:bg-emerald-700 disabled:opacity-60">
+                    {busy === "install" ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
+                    Yes, install now
+                  </button>
+                </div>
+              ) : (
+                <button type="button" onClick={() => setConfirming(true)} disabled={!!busy}
+                  className="inline-flex shrink-0 items-center gap-2 rounded-lg bg-emerald-600 px-4 py-2 text-sm font-bold text-white hover:bg-emerald-700 disabled:opacity-60">
+                  <Download className="h-4 w-4" /> Install this update
+                </button>
+              )
+            ) : (
+              <span className="shrink-0 text-xs text-sage-500">Only the owner can install updates.</span>
+            )}
+          </div>
+
+          {confirming && (
+            <p className="mt-3 border-t border-emerald-200 pt-3 text-sm text-sage-700">
+              The till will be unavailable for a minute or two. Finish any sale in progress first.
+            </p>
+          )}
+        </div>
+      )}
+
+      {!queued && !u && state?.ok !== false && (
+        <div className="flex items-center gap-2 rounded-lg border border-sage-200 bg-sage-50 p-3 text-sm text-sage-600">
+          <CheckCircle2 className="h-4 w-4 text-emerald-600" /> This system is running the latest release.
+        </div>
+      )}
+
+      {status?.state === "failed" && (
+        <div className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+          <p className="font-semibold">The last update did not complete.</p>
+          <p className="mt-1">{status.error || "No reason was recorded."}</p>
+          <p className="mt-1 text-xs">
+            The previous version was restored automatically, which is why the pharmacy is still working.
+          </p>
+        </div>
+      )}
+
+      <p className="text-xs text-sage-500">
+        Updates are checked with your vendor and verified here before they are shown. A release that is
+        unsigned, expired, meant for another product, or pointing anywhere other than this product&rsquo;s own
+        source is refused and never offered.
+      </p>
     </div>
   );
 }
