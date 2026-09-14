@@ -35,6 +35,7 @@ const reports = require("./controllers/reportsController");
 const publicHealth = require("./controllers/publicHealthController");
 const notifications = require("./controllers/notificationsController");
 const alerts = require("./controllers/alertsController");
+const disposals = require("./controllers/disposalsController");
 const promotions = require("./controllers/promotionsController");
 const clinical = require("./controllers/clinicalController");
 const rtv = require("./controllers/rtvController");
@@ -159,6 +160,14 @@ app.get("/api/audit/verify", protect, authorize("owner", "manager"), audit.verif
 // Header bell. Any signed-in user, because a counter assistant who cannot see
 // that a batch expired tomorrow is the person most likely to sell it.
 app.get("/api/alerts/summary", protect, alerts.summary);
+
+// ── Disposal of stock that must not be sold ─────────────────
+// Writing off stock is destroying value, so it sits behind the same permission
+// as a stock adjustment — which is what each line still records underneath.
+app.get("/api/disposals/eligible", protect, requireModule("inventory"), requirePermission("inventory.adjust"), disposals.eligible);
+app.get("/api/disposals", protect, requireModule("inventory"), disposals.list);
+app.post("/api/disposals", protect, requireModule("inventory"), requirePermission("inventory.adjust"), disposals.create);
+app.get("/api/disposals/:id/certificate.pdf", protect, requireModule("inventory"), disposals.certificatePDF);
 
 app.get("/api/notifications", protect, authorize("owner", "manager"), notifications.list);
 app.get("/api/notifications/config", protect, authorize("owner", "manager"), notifications.getConfig);

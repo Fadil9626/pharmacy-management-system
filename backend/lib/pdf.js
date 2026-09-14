@@ -139,4 +139,86 @@ function statement(res, { data, settings }) {
   doc.end();
 }
 
-module.exports = { invoice, statement };
+
+// ── Certificate of disposal ─────────────────────────────────
+//
+// The paper an inspector asks for. Everything on it is copied from the
+// disposal record rather than recomputed from current stock: the whole point is
+// that it says what was true on the day, and stays saying it after the product
+// is renamed, reordered or deleted.
+function disposalCertificate(res, { disposal, items, settings }) {
+  const d = start(res, `${disposal.ref || "disposal"}.pdf`);
+  const money = (n) => `${settings.currency_symbol || ""}${Number(n || 0).toFixed(2)}`;
+  const date = new Date(disposal.created_at).toLocaleString();
+
+  letterhead(d, settings, "CERTIFICATE OF DISPOSAL", [
+    disposal.ref || "",
+    date,
+  ]);
+
+  d.font("Helvetica").fontSize(10).fillColor("#222");
+  const facts = [
+    ["Reason", String(disposal.reason || "expired").replace(/^./, (c) => c.toUpperCase())],
+    ["Method", disposal.method || "Not recorded"],
+    ["Carried out by", disposal.disposed_by || "—"],
+    ["Witnessed by", disposal.witness_name || "—"],
+  ];
+  facts.forEach(([k, v]) => {
+    d.font("Helvetica-Bold").text(`${k}: `, L, d.y, { continued: true });
+    d.font("Helvetica").text(v);
+  });
+  if (disposal.note) {
+    d.moveDown(0.3);
+    d.font("Helvetica-Oblique").fillColor("#555").fontSize(9).text(disposal.note, L, d.y, { width: R - L });
+    d.fillColor("#222").fontSize(10);
+  }
+  d.moveDown(0.8);
+
+  const cols = [
+    { x: L,       w: 170, key: "product_name", label: "Product" },
+    { x: L + 175, w: 70,  key: "batch_no",     label: "Batch" },
+    { x: L + 250, w: 70,  key: "expiry",       label: "Expiry" },
+    { x: L + 325, w: 45,  key: "qty",          label: "Qty",   align: "right" },
+    { x: L + 375, w: 55,  key: "unit_cost",    label: "Unit",  align: "right" },
+    { x: L + 435, w: 60,  key: "line_cost",    label: "Value", align: "right" },
+  ];
+  row(d, cols.map((c) => ({ text: c.label, x: c.x, w: c.w, align: c.align })), d.y, { bold: true });
+  d.moveDown(0.4);
+  d.moveTo(L, d.y).lineTo(R, d.y).strokeColor("#ccc").lineWidth(0.5).stroke();
+  d.moveDown(0.3);
+
+  items.forEach((it) => {
+    if (d.y > 720) { d.addPage(); }
+    const vals = {
+      product_name: (it.product_name || "") + (it.is_controlled ? "  [CD]" : ""),
+      batch_no: it.batch_no || "—",
+      expiry: it.expiry_date ? new Date(it.expiry_date).toISOString().slice(0, 10) : "—",
+      qty: String(it.qty),
+      unit_cost: money(it.unit_cost),
+      line_cost: money(it.line_cost),
+    };
+    row(d, cols.map((c) => ({ text: vals[c.key], x: c.x, w: c.w, align: c.align })), d.y);
+    d.moveDown(0.55);
+  });
+
+  d.moveDown(0.3);
+  d.moveTo(L, d.y).lineTo(R, d.y).strokeColor("#ccc").lineWidth(0.5).stroke();
+  d.moveDown(0.4);
+  row(d, [
+    { text: `${disposal.total_units} unit(s) destroyed`, x: L, w: 300 },
+    { text: `Total value at cost: ${money(disposal.total_cost)}`, x: L + 245, w: R - L - 245, align: "right" },
+  ], d.y, { bold: true });
+
+  // Signature lines. A certificate nobody signed is a printout.
+  d.moveDown(3);
+  const sy = d.y;
+  d.font("Helvetica").fontSize(9).fillColor("#555");
+  d.moveTo(L, sy).lineTo(L + 200, sy).strokeColor("#888").lineWidth(0.5).stroke();
+  d.text("Signature — carried out by", L, sy + 4, { width: 200 });
+  d.moveTo(R - 200, sy).lineTo(R, sy).stroke();
+  d.text("Signature — witness", R - 200, sy + 4, { width: 200, align: "right" });
+
+  d.end();
+}
+
+module.exports = { invoice, statement, disposalCertificate };

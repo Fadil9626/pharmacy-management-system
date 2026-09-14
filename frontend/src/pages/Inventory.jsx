@@ -59,6 +59,150 @@ function StockBadge({ p, nearMonths = 3 }) {
   return <span className="chip bg-brand-100 text-brand-700 dark:bg-brand-900/40 dark:text-brand-300">In stock</span>;
 }
 
+
+// ── Disposing of stock that must not be sold ────────────────────────────────
+//
+// The end of the job the header bell starts. It could already be done one batch
+// at a time through Adjust, but twelve adjustments made over an afternoon are
+// the same stock movement as one disposal and are NOT the same record — and the
+// record is what an inspector asks for.
+//
+// Whole batches only. A batch is not half-expired, and offering a quantity box
+// would invite someone to write off part of it and leave the rest on the shelf.
+function DisposeModal({ onClose, onDone }) {
+  const [data, setData] = useState(null);
+  const [picked, setPicked] = useState(() => new Set());
+  const [method, setMethod] = useState("");
+  const [witness, setWitness] = useState("");
+  const [note, setNote] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+
+  useEffect(() => {
+    api("/api/disposals/eligible")
+      .then((d) => { setData(d); setPicked(new Set(d.rows.map((r) => r.batch_id))); })
+      .catch((e) => setErr(e.message));
+  }, []);
+
+  const rows = data?.rows || [];
+  const chosen = rows.filter((r) => picked.has(r.batch_id));
+  const units = chosen.reduce((s2, r) => s2 + r.quantity, 0);
+  const value = Math.round(chosen.reduce((s2, r) => s2 + r.line_cost, 0) * 100) / 100;
+  const anyControlled = chosen.some((r) => r.is_controlled);
+
+  const toggle = (id) => setPicked((prev) => {
+    const n = new Set(prev);
+    if (n.has(id)) n.delete(id); else n.add(id);
+    return n;
+  });
+
+  const submit = async () => {
+    setBusy(true); setErr("");
+    try {
+      const r = await api("/api/disposals", {
+        method: "POST",
+        body: { batch_ids: [...picked], reason: "expired", method, witness_name: witness, note },
+      });
+      onDone(r);
+    } catch (e) { setErr(e.message); } finally { setBusy(false); }
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 grid place-items-center bg-black/40 p-4">
+      <div className="flex max-h-[90vh] w-full max-w-3xl flex-col rounded-2xl bg-white shadow-xl dark:bg-sage-900">
+        <div className="flex items-center justify-between border-b border-sage-200 px-5 py-3 dark:border-sage-800">
+          <h2 className="font-semibold text-sage-900 dark:text-sage-50">Dispose of expired stock</h2>
+          <button onClick={onClose} className="btn-ghost !px-2 !py-2"><X className="h-4 w-4" /></button>
+        </div>
+
+        <div className="flex-1 overflow-y-auto px-5 py-4">
+          {!data && !err && <div className="flex h-24 items-center justify-center text-sage-400"><Loader2 className="h-5 w-5 animate-spin" /></div>}
+
+          {data && rows.length === 0 && (
+            <p className="py-6 text-center text-sm text-sage-500">Nothing is expired. There is nothing to dispose of.</p>
+          )}
+
+          {rows.length > 0 && (
+            <>
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b border-sage-200 text-left text-xs uppercase text-sage-500 dark:border-sage-800">
+                    <th className="py-2 pr-2"></th>
+                    <th className="py-2 pr-2">Product</th>
+                    <th className="py-2 pr-2">Batch</th>
+                    <th className="py-2 pr-2">Expired</th>
+                    <th className="py-2 pr-2 text-right">Qty</th>
+                    <th className="py-2 text-right">Value</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {rows.map((r) => (
+                    <tr key={r.batch_id} className="border-b border-sage-100 dark:border-sage-800/60">
+                      <td className="py-2 pr-2">
+                        <input type="checkbox" checked={picked.has(r.batch_id)} onChange={() => toggle(r.batch_id)} />
+                      </td>
+                      <td className="py-2 pr-2 text-sage-800 dark:text-sage-100">
+                        {r.product_name}
+                        {r.is_controlled && <span className="ml-1.5 rounded bg-rose-100 px-1.5 py-0.5 text-[10px] font-bold text-rose-700 dark:bg-rose-900/40 dark:text-rose-300">CD</span>}
+                      </td>
+                      <td className="py-2 pr-2 text-sage-500">{r.batch_no || "—"}</td>
+                      <td className="py-2 pr-2 text-sage-500">{r.expiry_date ? String(r.expiry_date).slice(0, 10) : "—"}</td>
+                      <td className="py-2 pr-2 text-right tabular-nums">{r.quantity}</td>
+                      <td className="py-2 text-right tabular-nums">{money(r.line_cost)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+
+              <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                <label className="text-sm">
+                  <span className="mb-1 block font-medium text-sage-700 dark:text-sage-200">How was it destroyed?</span>
+                  <input className="input" value={method} onChange={(e) => setMethod(e.target.value)} placeholder="Incineration, returned to supplier&hellip;" />
+                </label>
+                <label className="text-sm">
+                  <span className="mb-1 block font-medium text-sage-700 dark:text-sage-200">
+                    Witness {anyControlled && <span className="text-rose-600">(required)</span>}
+                  </span>
+                  <input className="input" value={witness} onChange={(e) => setWitness(e.target.value)} placeholder="Name of the person who witnessed it" />
+                </label>
+                <label className="text-sm sm:col-span-2">
+                  <span className="mb-1 block font-medium text-sage-700 dark:text-sage-200">Note</span>
+                  <input className="input" value={note} onChange={(e) => setNote(e.target.value)} placeholder="Anything worth recording" />
+                </label>
+              </div>
+
+              {anyControlled && (
+                <p className="mt-3 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700 dark:border-rose-900 dark:bg-rose-950/40 dark:text-rose-300">
+                  This includes controlled drugs. Destruction must be witnessed, and the certificate records who by.
+                </p>
+              )}
+            </>
+          )}
+
+          {err && <p className="mt-3 text-sm text-rose-600">{err}</p>}
+        </div>
+
+        <div className="flex flex-wrap items-center justify-between gap-3 border-t border-sage-200 px-5 py-3 dark:border-sage-800">
+          <span className="text-sm text-sage-600 dark:text-sage-300">
+            <strong>{chosen.length}</strong> batch{chosen.length === 1 ? "" : "es"} &middot; {units} unit{units === 1 ? "" : "s"} &middot; {money(value)} at cost
+          </span>
+          <span className="flex gap-2">
+            <button onClick={onClose} className="btn-ghost">Cancel</button>
+            <button
+              onClick={submit}
+              disabled={busy || chosen.length === 0}
+              className="inline-flex items-center gap-2 rounded-lg bg-rose-600 px-4 py-2 text-sm font-semibold text-white hover:bg-rose-700 disabled:opacity-60"
+            >
+              {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
+              Write off and record
+            </button>
+          </span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function Inventory() {
   const { settings, can } = useAuth();
   const nearMonths = Number(settings?.near_expiry_months || 3);
@@ -68,6 +212,8 @@ export default function Inventory() {
   const [err, setErr] = useState("");
   const [categories, setCategories] = useState([]);
   const [catFilter, setCatFilter] = useState("");
+  const [disposing, setDisposing] = useState(false);
+  const [disposed, setDisposed] = useState(null);   // { ref, total_units, total_cost }
   // Stock status, driven by the URL so the header bell can link straight to
   // what it is complaining about. Landing on the full product list and being
   // told "3 expired batches" somewhere in it is not an alert, it is a puzzle.
@@ -148,6 +294,35 @@ export default function Inventory() {
 
   return (
     <div className="mx-auto max-w-6xl space-y-6">
+      {disposing && (
+        <DisposeModal
+          onClose={() => setDisposing(false)}
+          onDone={(r) => { setDisposing(false); setDisposed(r); load(); }}
+        />
+      )}
+
+      {/* The certificate is the point of the exercise, so it is offered here
+          rather than left to be found later in a register. */}
+      {disposed && (
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-emerald-300 bg-emerald-50 px-4 py-2.5 text-sm text-emerald-900 dark:border-emerald-900 dark:bg-emerald-950/40 dark:text-emerald-200">
+          <span>
+            <strong>{disposed.ref}</strong> recorded &mdash; {disposed.total_units} unit(s) written off, {money(disposed.total_cost)} at cost.
+          </span>
+          <span className="flex items-center gap-2">
+            <a
+              href={`/api/disposals/${disposed.id}/certificate.pdf`}
+              target="_blank" rel="noreferrer"
+              className="rounded-lg bg-emerald-600 px-2.5 py-1 text-xs font-semibold text-white hover:bg-emerald-700"
+            >
+              Certificate of disposal
+            </a>
+            <button onClick={() => setDisposed(null)} className="rounded-lg border border-current/30 px-2.5 py-1 text-xs font-semibold">
+              Dismiss
+            </button>
+          </span>
+        </div>
+      )}
+
       {status && (
         <div className={`flex flex-wrap items-center justify-between gap-3 rounded-xl border px-4 py-2.5 text-sm ${
           status === "expired"
@@ -158,12 +333,22 @@ export default function Inventory() {
             Showing <strong>{filtered.length}</strong> product{filtered.length === 1 ? "" : "s"} {STATUS_LABEL[status] || status}.
             {status === "expired" && " This stock must not be dispensed — remove it from the shelf."}
           </span>
-          <button
-            onClick={() => { const n = new URLSearchParams(params); n.delete("status"); setParams(n, { replace: true }); }}
-            className="rounded-lg border border-current/30 px-2.5 py-1 text-xs font-semibold"
-          >
-            Show all products
-          </button>
+          <span className="flex items-center gap-2">
+            {status === "expired" && (
+              <button
+                onClick={() => setDisposing(true)}
+                className="rounded-lg bg-rose-600 px-2.5 py-1 text-xs font-semibold text-white hover:bg-rose-700"
+              >
+                Dispose of expired stock
+              </button>
+            )}
+            <button
+              onClick={() => { const n = new URLSearchParams(params); n.delete("status"); setParams(n, { replace: true }); }}
+              className="rounded-lg border border-current/30 px-2.5 py-1 text-xs font-semibold"
+            >
+              Show all products
+            </button>
+          </span>
         </div>
       )}
       <div className="flex flex-wrap items-center justify-between gap-3">
