@@ -107,20 +107,33 @@ function AlertBell() {
   }, []);
 
   const c = data?.counts;
+  // out_of_stock is a SUBSET of low_stock, so it is not added in — counting it
+  // twice would inflate the badge and make the number mean nothing.
   const total = c ? c.low_stock + c.near_expiry + c.expired + c.refill_due : 0;
-  // Expired stock is the one that must not be sold at all, so it is the only
-  // thing that turns the badge red.
-  const urgent = (c?.expired || 0) > 0;
+  // Expired stock must not be sold at all, and an empty shelf turns a customer
+  // away. Those are the two the badge goes red for; the rest are amber.
+  const urgent = (c?.expired || 0) > 0 || (c?.out_of_stock || 0) > 0;
 
   const go = (path) => { setOpen(false); navigate(path); };
 
-  const Row = ({ icon: Icon, tone, label, n, onClick }) => {
+  // `preview` names the first couple of items so the bell says which, not just
+  // how many. The endpoint already returns them and the first version of this
+  // threw them away.
+  const Row = ({ icon: Icon, tone, label, n, onClick, preview }) => {
     if (!n) return null;
+    const names = (preview || []).map((x) => x.name).filter(Boolean).slice(0, 2);
     return (
       <button onClick={onClick}
-        className="flex w-full items-center gap-3 rounded-lg px-3 py-2 text-left transition hover:bg-sage-100 dark:hover:bg-sage-800">
-        <Icon className={`h-4 w-4 shrink-0 ${tone}`} />
-        <span className="flex-1 text-sm text-sage-700 dark:text-sage-200">{label}</span>
+        className="flex w-full items-start gap-3 rounded-lg px-3 py-2 text-left transition hover:bg-sage-100 dark:hover:bg-sage-800">
+        <Icon className={`mt-0.5 h-4 w-4 shrink-0 ${tone}`} />
+        <span className="min-w-0 flex-1">
+          <span className="block text-sm text-sage-700 dark:text-sage-200">{label}</span>
+          {names.length > 0 && (
+            <span className="block truncate text-xs text-sage-500 dark:text-sage-400">
+              {names.join(", ")}{n > names.length ? ` and ${n - names.length} more` : ""}
+            </span>
+          )}
+        </span>
         <span className="text-sm font-bold text-sage-900 dark:text-sage-50">{n}</span>
       </button>
     );
@@ -161,15 +174,24 @@ function AlertBell() {
 
             {data && (
               <>
+                {/* Each row lands on the products it is talking about, not on
+                    the full list. "3 expired batches" with no way to find them
+                    is a puzzle, not an alert. */}
                 <Row icon={PackageX} tone="text-rose-600"
-                     label="Expired batches still in stock" n={c.expired}
-                     onClick={() => go("/inventory")} />
+                     label="Expired stock on the shelf" n={c.expired}
+                     preview={data.near_expiry?.filter((b) => new Date(b.expiry_date) < new Date())}
+                     onClick={() => go("/inventory?status=expired")} />
+                <Row icon={PackageX} tone="text-rose-600"
+                     label="Out of stock" n={c.out_of_stock}
+                     onClick={() => go("/inventory?status=out")} />
                 <Row icon={CalendarClock} tone="text-amber-600"
                      label={`Expiring within ${data.near_expiry_months} months`} n={c.near_expiry}
-                     onClick={() => go("/inventory")} />
+                     preview={data.near_expiry}
+                     onClick={() => go("/inventory?status=expiring")} />
                 <Row icon={Boxes} tone="text-amber-600"
                      label="At or below reorder level" n={c.low_stock}
-                     onClick={() => go("/inventory")} />
+                     preview={data.low_stock}
+                     onClick={() => go("/inventory?status=low")} />
                 <Row icon={RefreshCw} tone="text-brand-600"
                      label="Prescriptions due a refill" n={c.refill_due}
                      onClick={() => go("/prescriptions")} />

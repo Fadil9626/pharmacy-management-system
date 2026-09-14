@@ -52,6 +52,20 @@ exports.summary = async (_req, res) => {
         WHERE quantity > 0 AND expiry_date IS NOT NULL AND expiry_date < CURRENT_DATE`
     );
 
+    // Nothing sellable at all, which is not the same as "low". Low means order
+    // more; zero means the next person asking for it leaves without it. Counted
+    // apart so a shelf with one item at zero is not hidden inside a low-stock
+    // number that has been amber for weeks.
+    const out = await pool.query(
+      `SELECT COUNT(*)::int AS n FROM (
+         SELECT p.id
+           FROM products p LEFT JOIN product_batches b ON b.product_id = p.id
+          WHERE p.is_active = true
+          GROUP BY p.id
+         HAVING COALESCE(SUM(b.quantity) FILTER (WHERE b.expiry_date IS NULL OR b.expiry_date >= CURRENT_DATE), 0) <= 0
+       ) z`
+    );
+
     // Prescriptions with refills remaining, dispensed long enough ago to be due.
     // Soft-failed: an install without the prescriptions module still gets a bell.
     const refill = await pool.query(
@@ -64,10 +78,14 @@ exports.summary = async (_req, res) => {
     res.json({
       near_expiry_months: months,
       counts: {
-        low_stock:  low.rows.length,
-        near_expiry: exp.rows.length,
-        expired:     expired.rows[0].n,
-        refill_due:  refill.rows[0].n,
+        // low_stock counts products at or below reorder level INCLUDING those
+        // at zero, which is how runAlerts counts them. out_of_stock is a subset,
+        // surfaced separately — so the two must not be added together.
+        low_stock:    low.rows.length,
+        out_of_stock: out.rows[0].n,
+        near_expiry:  exp.rows.length,
+        expired:      expired.rows[0].n,
+        refill_due:   refill.rows[0].n,
       },
       low_stock:   low.rows.slice(0, 5),
       near_expiry: exp.rows.slice(0, 5),

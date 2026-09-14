@@ -1,4 +1,5 @@
 import { Fragment, useEffect, useMemo, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import { api } from "../lib/api.js";
 import { useAuth } from "../context/AuthContext.jsx";
 import { money } from "../lib/money.js";
@@ -67,6 +68,11 @@ export default function Inventory() {
   const [err, setErr] = useState("");
   const [categories, setCategories] = useState([]);
   const [catFilter, setCatFilter] = useState("");
+  // Stock status, driven by the URL so the header bell can link straight to
+  // what it is complaining about. Landing on the full product list and being
+  // told "3 expired batches" somewhere in it is not an alert, it is a puzzle.
+  const [params, setParams] = useSearchParams();
+  const status = params.get("status") || "";
   const [showCategories, setShowCategories] = useState(false);
   const [showImport, setShowImport] = useState(false);
   const [showCount, setShowCount] = useState(false);
@@ -95,20 +101,71 @@ export default function Inventory() {
     api("/api/suppliers").then(setSuppliers).catch(() => {});
   }, []);
 
+  // Expiry windows, worked out once per render rather than per product.
+  const today = useMemo(() => { const d = new Date(); d.setHours(0, 0, 0, 0); return d; }, []);
+  const soon = useMemo(() => {
+    const d = new Date(today);
+    // Matches the default the alerts endpoint uses; a product-level view of a
+    // batch-level fact, so counts here read lower than the bell's by design.
+    d.setMonth(d.getMonth() + 3);
+    return d;
+  }, [today]);
+
+  const matchesStatus = (p) => {
+    if (!status) return true;
+    const stock = Number(p.stock) || 0;
+    const nearest = p.nearest_expiry ? new Date(p.nearest_expiry) : null;
+    switch (status) {
+      case "out":      return stock <= 0;
+      // Low excludes zero: those have their own filter, and mixing them hides
+      // the one you cannot dispense inside the one you merely need to reorder.
+      case "low":      return stock > 0 && stock <= (Number(p.reorder_level) || 0);
+      case "expired":  return !!nearest && nearest < today;
+      case "expiring": return !!nearest && nearest >= today && nearest <= soon;
+      default:         return true;
+    }
+  };
+
   const filtered = useMemo(() => {
     if (!products) return [];
     const term = q.trim().toLowerCase();
     return products.filter((p) => {
+      if (!matchesStatus(p)) return false;
       if (catFilter && String(p.category_id || "") !== String(catFilter)) return false;
       if (!term) return true;
       return [p.name, p.generic_name, p.category, p.barcode]
         .filter(Boolean)
         .some((v) => v.toLowerCase().includes(term));
     });
-  }, [products, q, catFilter]);
+  }, [products, q, catFilter, status, today, soon]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const STATUS_LABEL = {
+    out: "out of stock",
+    low: "at or below reorder level",
+    expired: "holding expired stock",
+    expiring: "expiring within 3 months",
+  };
 
   return (
     <div className="mx-auto max-w-6xl space-y-6">
+      {status && (
+        <div className={`flex flex-wrap items-center justify-between gap-3 rounded-xl border px-4 py-2.5 text-sm ${
+          status === "expired"
+            ? "border-rose-300 bg-rose-50 text-rose-800 dark:border-rose-900 dark:bg-rose-950/40 dark:text-rose-200"
+            : "border-amber-300 bg-amber-50 text-amber-800 dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-200"
+        }`}>
+          <span>
+            Showing <strong>{filtered.length}</strong> product{filtered.length === 1 ? "" : "s"} {STATUS_LABEL[status] || status}.
+            {status === "expired" && " This stock must not be dispensed — remove it from the shelf."}
+          </span>
+          <button
+            onClick={() => { const n = new URLSearchParams(params); n.delete("status"); setParams(n, { replace: true }); }}
+            className="rounded-lg border border-current/30 px-2.5 py-1 text-xs font-semibold"
+          >
+            Show all products
+          </button>
+        </div>
+      )}
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h1 className="font-display text-2xl font-semibold text-sage-900 dark:text-sage-50">
