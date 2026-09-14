@@ -55,6 +55,37 @@ const WHITE = [255, 255, 255], BLACK = [0, 0, 0];
 const luminance = (hex) => { const [r, g, b] = hexToRgb(hex); return (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255; };
 const isLight = (hex) => luminance(hex) > 0.6;
 
+// WCAG-style contrast ratio, 1 (identical) to 21 (black on white).
+// `luminance` above is an approximation, not the gamma-corrected relative
+// luminance of the spec — good enough to tell "unreadable" from "fine", which
+// is all this is used for.
+const contrastRatio = (a, b) => {
+  const la = luminance(a), lb = luminance(b);
+  const [hi, lo] = la > lb ? [la, lb] : [lb, la];
+  return (hi + 0.05) / (lo + 0.05);
+};
+
+/**
+ * The chosen foreground, unless it cannot be seen on that background.
+ *
+ * A pharmacy can pick whatever chrome colours it likes, and taste is not this
+ * function's business — but 1.0:1 is not taste, it is a control nobody can
+ * find. This install had topbar_text #0f172a saved against a #031130 topbar,
+ * almost certainly because the colour picker was pre-filled with the old
+ * hardcoded default while the background was changed to something dark. The
+ * bell and the theme toggle were rendered, correctly, in a colour identical to
+ * what was behind them.
+ *
+ * The threshold is deliberately low. 3:1 is the floor for large text and UI
+ * components, so a genuinely styled-but-subtle choice survives and only the
+ * truly invisible is overridden.
+ */
+const readableOn = (bg, wanted) => {
+  if (!bg) return wanted || null;
+  if (wanted && contrastRatio(bg, wanted) >= 3) return wanted;
+  return isLight(bg) ? "#0f172a" : "#ffffff";
+};
+
 // Full Tailwind-style ramp from one base colour (treated as shade 600).
 export function paletteFromColor(hex) {
   const base = hexToRgb(hex);
@@ -86,7 +117,7 @@ export function applyThemeConfig(cfg) {
   CHROME_VARS.forEach((v) => root.style.removeProperty(v));
   if (c.sidebar_bg) {
     setVar("--sidebar-bg", triplet(c.sidebar_bg));
-    setVar("--sidebar-text", triplet(c.sidebar_text || "#ffffff"));
+    setVar("--sidebar-text", triplet(readableOn(c.sidebar_bg, c.sidebar_text) || "#ffffff"));
     setVar("--sidebar-hover", isLight(c.sidebar_bg) ? "0 0 0" : "255 255 255");
   }
   if (c.topbar_bg) {
@@ -98,7 +129,7 @@ export function applyThemeConfig(cfg) {
     // branch switcher stayed readable only because it carries its own
     // dark:text-sage-100 and never reads this at all — which is why the topbar
     // looked fine until something new was put next to it.
-    setVar("--topbar-text", triplet(c.topbar_text || (isLight(c.topbar_bg) ? "#0f172a" : "#ffffff")));
+    setVar("--topbar-text", triplet(readableOn(c.topbar_bg, c.topbar_text)));
   }
 
   try { localStorage.setItem("remedy-brand-css", css); } catch {}
