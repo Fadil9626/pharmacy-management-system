@@ -43,7 +43,31 @@ const updates = require("./lib/updateClient");
 const buildInfo = require("./lib/buildInfo");
 
 const app = express();
-app.use(cors());
+// CORS: an allow-list, not a wildcard.
+//
+// `cors()` with no options answers every origin. Auth here is a Bearer token in
+// localStorage rather than a cookie, so this is not the classic CSRF hole — an
+// attacker's page cannot read the token and so cannot act as the user. What it
+// did allow was any website the pharmacist happened to visit making requests to
+// this API, including a LAN or localhost install that is otherwise unreachable
+// from the internet: password guessing against /api/auth/login from inside the
+// victim's own browser, and enumeration of the public endpoints.
+//
+// Same-origin in production needs no CORS at all, because the API serves the
+// built frontend itself. CORS_ORIGINS is there for a split deployment.
+const ALLOWED_ORIGINS = String(process.env.CORS_ORIGINS || "")
+  .split(",").map((o) => o.trim()).filter(Boolean);
+app.use(cors({
+  origin(origin, cb) {
+    // No Origin header: same-origin, curl, a mobile app. Not a browser
+    // cross-origin request, so there is nothing for CORS to decide.
+    if (!origin) return cb(null, true);
+    if (ALLOWED_ORIGINS.includes(origin)) return cb(null, true);
+    // Vite dev server, so working locally does not need configuration.
+    if (process.env.NODE_ENV !== "production" && /^http:\/\/localhost:\d+$/.test(origin)) return cb(null, true);
+    return cb(null, false);   // no CORS headers — the browser blocks it
+  },
+}));
 app.use(express.json({ limit: "2mb" }));
 
 // Baseline security headers (no extra deps).
@@ -79,13 +103,42 @@ const dbReady = (async () => {
     }
     const { rows } = await pool.query("SELECT COUNT(*)::int n FROM users");
     if (rows[0].n === 0) {
-      const hash = await bcrypt.hash("admin123", 10);
+      // First-boot owner account.
+      //
+      // This used to be "admin123" on every install, printed in the log and
+      // written in the README with "change this immediately". Most people do
+      // not, and this repository is public — so every pharmacy that skipped
+      // that line shipped with a published owner password.
+      //
+      // In production the password is random unless one is supplied, and it is
+      // printed once, here, where whoever ran the install is watching. Locally
+      // it stays admin123, because a dev machine with seeded demo data is not
+      // the thing being protected.
+      const isProd = process.env.NODE_ENV === "production";
+      const seedPassword =
+        process.env.SEED_ADMIN_PASSWORD ||
+        (isProd ? require("crypto").randomBytes(9).toString("base64url") : "admin123");
+      const hash = await bcrypt.hash(seedPassword, 10);
       const b = await pool.query("SELECT id FROM branches WHERE is_main LIMIT 1");
       await pool.query(
         "INSERT INTO users (branch_id, full_name, email, password_hash, role) VALUES ($1,'Administrator','admin@remedy.local',$2,'owner')",
         [b.rows[0]?.id || null, hash]
       );
-      console.log("✅ Seeded admin — email: admin@remedy.local  password: admin123");
+      if (isProd && !process.env.SEED_ADMIN_PASSWORD) {
+        console.log("");
+        console.log("  ┌──────────────────────────────────────────────────────────────┐");
+        console.log("  │  FIRST-BOOT OWNER ACCOUNT — this is shown once               │");
+        console.log("  ├──────────────────────────────────────────────────────────────┤");
+        console.log(`  │  email:     admin@remedy.local`);
+        console.log(`  │  password:  ${seedPassword}`);
+        console.log("  │                                                              │");
+        console.log("  │  Write it down, sign in, and change it. It is not stored     │");
+        console.log("  │  anywhere in readable form and cannot be shown again.        │");
+        console.log("  └──────────────────────────────────────────────────────────────┘");
+        console.log("");
+      } else {
+        console.log(`✅ Seeded admin — email: admin@remedy.local  password: ${seedPassword}`);
+      }
     }
     if (await seedIfEmpty()) console.log("✅ Seeded default role permissions");
     const chained = await require("./lib/audit").backfillAuditChain();

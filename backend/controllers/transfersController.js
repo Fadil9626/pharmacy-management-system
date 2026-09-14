@@ -1,11 +1,25 @@
 const pool = require("../config/db");
-const { effectiveBranch } = require("../lib/context");
+const { effectiveBranch, CROSS_BRANCH_ROLES } = require("../lib/context");
 const { logAudit } = require("../lib/audit");
 
 // Move stock between branches: FEFO-deduct at source, recreate batches at dest.
 exports.create = async (req, res) => {
   const { from_branch_id, to_branch_id, items, note } = req.body || {};
-  const fromBranch = Number(from_branch_id) || effectiveBranch(req);
+
+  // The SOURCE is where stock leaves from, and it arrived in the request body —
+  // which meant anyone who could transfer could empty a branch they have
+  // nothing to do with. effectiveBranch pins the lens for ordinary staff, and
+  // this path went round it by reading the body first.
+  //
+  // Sending stock TO another branch is fine for anyone: it is the branch you are
+  // taking it OUT of that has to be yours.
+  const mayCross = CROSS_BRANCH_ROLES.includes(req.user?.role);
+  const requestedFrom = Number(from_branch_id) || effectiveBranch(req);
+  if (!mayCross && requestedFrom && req.user?.branch_id && requestedFrom !== req.user.branch_id) {
+    return res.status(403).json({ message: "You can only transfer stock out of your own branch" });
+  }
+
+  const fromBranch = mayCross ? requestedFrom : (req.user?.branch_id || requestedFrom);
   const toBranch = Number(to_branch_id);
   if (!fromBranch) return res.status(400).json({ message: "No source branch — pick a branch to transfer from" });
   if (!toBranch) return res.status(400).json({ message: "Choose a destination branch" });

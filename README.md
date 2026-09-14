@@ -45,7 +45,7 @@ npm run build               # the backend serves frontend/dist in production
 
 The backend serves the built frontend, so the whole app runs on the backend port (default **5190**).
 
-**Default login (first boot):** `admin@remedy.local` / `admin123` — change this immediately.
+**Default login (first boot):** `admin@remedy.local`. In development the password is `admin123`. In production a random password is generated and printed **once** in the server log on first boot — record it then, or set `SEED_ADMIN_PASSWORD` in `backend/.env` before starting.
 
 ### Deploy / update
 

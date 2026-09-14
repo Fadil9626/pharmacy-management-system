@@ -14,7 +14,23 @@ exports.serveImage = async (req, res) => {
     const dataUrl = rows[0]?.image;
     const m = dataUrl && /^data:(.+?);base64,(.*)$/s.exec(dataUrl);
     if (!m) return res.status(404).end();
-    res.set("Content-Type", m[1]);
+
+    // The type is taken from stored data, and stored data came from a request
+    // body. Echoing it back unchecked meant an image row containing
+    // "data:text/html;base64,..." would be served as HTML from this app's own
+    // origin — stored XSS, reachable by anyone who can edit a product, and
+    // landing on whoever views it next. This endpoint is public, so the page it
+    // produced would be too.
+    //
+    // Allow-list, not a filter: anything not on it is simply not an image.
+    const IMAGE_TYPES = ["image/png", "image/jpeg", "image/jpg", "image/gif", "image/webp", "image/avif"];
+    const type = String(m[1]).split(";")[0].trim().toLowerCase();
+    if (!IMAGE_TYPES.includes(type)) return res.status(404).end();
+
+    res.set("Content-Type", type);
+    res.set("X-Content-Type-Options", "nosniff");
+    // Nothing in an image needs to execute or fetch anything.
+    res.set("Content-Security-Policy", "default-src 'none'; img-src 'self' data:");
     res.set("Cache-Control", "public, max-age=300");
     res.send(Buffer.from(m[2], "base64"));
   } catch (e) {
@@ -179,9 +195,23 @@ const numOrNull = (v) => (v !== "" && v != null ? Number(v) : null);
 const riskVal = (v) => (["none", "caution", "avoid"].includes(v) ? v : "none");
 const condArr = (v) => JSON.stringify(Array.isArray(v) ? v.map((x) => String(x).trim()).filter(Boolean) : []);
 
+// Reject anything stored in products.image that is not actually an image.
+//
+// serveImage is public and echoes the stored type back as Content-Type, so a
+// row holding "data:text/html;base64,..." becomes an attacker-controlled page
+// on this app's own origin. Serving is guarded, and so is writing: one of the
+// two is a fix, both is the thing not coming back through some other path that
+// sets this column later.
+const IMAGE_DATA_URL = /^data:image\/(png|jpe?g|gif|webp|avif);base64,[A-Za-z0-9+/=\s]+$/i;
+const cleanImage = (v) => {
+  if (v === undefined || v === null || v === "") return v;
+  return IMAGE_DATA_URL.test(String(v)) ? v : null;
+};
+
 exports.createProduct = async (req, res) => {
   const b = req.body || {};
-  const { name, generic_name, category, category_id, dosage_form, strength, unit, barcode, is_controlled, reorder_level, base_price, pack_size, pack_label, surveillance_tag, image } = b;
+  const { name, generic_name, category, category_id, dosage_form, strength, unit, barcode, is_controlled, reorder_level, base_price, pack_size, pack_label, surveillance_tag } = b;
+  const image = cleanImage(b.image);
   if (!name) return res.status(400).json({ message: "Product name is required" });
   try {
     const cat = await resolveCategory(category_id, category);
@@ -213,7 +243,9 @@ exports.createProduct = async (req, res) => {
 exports.updateProduct = async (req, res) => {
   const id = Number(req.params.id);
   const b = req.body || {};
-  const { name, generic_name, category, category_id, dosage_form, strength, unit, barcode, is_controlled, reorder_level, base_price, pack_size, pack_label, surveillance_tag, image } = b;
+  const { name, generic_name, category, category_id, dosage_form, strength, unit, barcode, is_controlled, reorder_level, base_price, pack_size, pack_label, surveillance_tag } = b;
+  // Same guard as createProduct — an edit is the other way into this column.
+  const image = cleanImage(b.image);
   if (!name) return res.status(400).json({ message: "Product name is required" });
   try {
     const cat = await resolveCategory(category_id, category);
