@@ -91,10 +91,29 @@ function Brand({ name, logo, collapsed }) {
 //
 // Polled every five minutes and on window focus. Stock does not change fast
 // enough to justify more, and a counter machine is left open all day.
+// Which alerts this person has already looked at, and at what size.
+//
+// Deliberately "seen", not "cleared". These are live conditions, not messages:
+// stock is still expired after you have read about it, and a badge that dropped
+// to zero on click would report a clean shelf while three batches sit on it.
+// Acknowledging silences the badge and changes nothing in the list.
+//
+// The count is stored WITH the acknowledgement, which is what makes it safe: the
+// moment a category gets worse it stops matching and the badge returns. Seeing
+// "3 expiring" does not buy silence for the fourth.
+//
+// Per device, in localStorage. This is one person saying "I have looked" at the
+// screen in front of them, not a fact about the pharmacy.
+const SEEN_KEY = "remedy-alerts-seen";
+const readSeen = () => { try { return JSON.parse(localStorage.getItem(SEEN_KEY) || "{}"); } catch { return {}; } };
+const writeSeen = (v) => { try { localStorage.setItem(SEEN_KEY, JSON.stringify(v)); } catch { /* private mode */ } };
+const ALERT_KEYS = ["expired", "out_of_stock", "near_expiry", "low_stock", "refill_due"];
+
 function AlertBell() {
   const navigate = useNavigate();
   const [data, setData] = useState(null);
   const [open, setOpen] = useState(false);
+  const [seen, setSeen] = useState(readSeen);
 
   const load = () => api("/api/alerts/summary").then(setData).catch(() => {});
 
@@ -107,14 +126,32 @@ function AlertBell() {
   }, []);
 
   const c = data?.counts;
+
+  // A category counts towards the badge unless it has been seen at this size or
+  // larger. Fewer expiring batches than last time is progress, not news.
+  const unseen = (key) => {
+    const n = Number(c?.[key] || 0);
+    return n > 0 && Number(seen[key] || 0) < n ? n : 0;
+  };
+
+  const ack = (keys) => {
+    const next = { ...seen };
+    for (const k of keys) next[k] = Number(c?.[k] || 0);
+    setSeen(next);
+    writeSeen(next);
+  };
+
   // out_of_stock is a SUBSET of low_stock, so it is not added in — counting it
   // twice would inflate the badge and make the number mean nothing.
-  const total = c ? c.low_stock + c.near_expiry + c.expired + c.refill_due : 0;
+  const total = unseen("low_stock") + unseen("near_expiry") + unseen("expired") + unseen("refill_due");
+  // Everything currently true, seen or not — the list always shows this.
+  const anything = c ? c.low_stock + c.near_expiry + c.expired + c.refill_due : 0;
   // Expired stock must not be sold at all, and an empty shelf turns a customer
   // away. Those are the two the badge goes red for; the rest are amber.
-  const urgent = (c?.expired || 0) > 0 || (c?.out_of_stock || 0) > 0;
+  const urgent = unseen("expired") > 0 || unseen("out_of_stock") > 0;
 
-  const go = (path) => { setOpen(false); navigate(path); };
+  // Following a row counts as having seen that category, and only that one.
+  const go = (path, keys) => { if (keys) ack(keys); setOpen(false); navigate(path); };
 
   // `preview` names the first couple of items so the bell says which, not just
   // how many. The endpoint already returns them and the first version of this
@@ -158,17 +195,34 @@ function AlertBell() {
         <>
           <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} />
           <div className="absolute right-0 top-full z-50 mt-2 w-72 rounded-xl border border-sage-200 bg-white p-1.5 shadow-lg dark:border-sage-800 dark:bg-sage-900">
-            <div className="px-3 py-2">
+            <div className="flex items-center justify-between gap-2 px-3 py-2">
               <p className="text-sm font-semibold text-sage-900 dark:text-sage-50">Needs attention</p>
+              {total > 0 && (
+                <button
+                  onClick={() => ack(ALERT_KEYS)}
+                  className="text-xs font-semibold text-brand-600 hover:underline dark:text-brand-400"
+                >
+                  Mark all as seen
+                </button>
+              )}
             </div>
 
             {!data && (
               <p className="px-3 pb-3 text-sm text-sage-500">Checking&hellip;</p>
             )}
 
-            {data && total === 0 && (
+            {data && anything === 0 && (
               <p className="px-3 pb-3 text-sm text-sage-500">
                 Nothing to flag &mdash; stock levels and expiry dates are all fine.
+              </p>
+            )}
+
+            {/* Seen is not solved. The badge is quiet; the shelf is not. Saying
+                "nothing to flag" here would be the exact lie this panel exists
+                to avoid. */}
+            {data && anything > 0 && total === 0 && (
+              <p className="px-3 pb-2 text-xs text-sage-500">
+                All seen. These are still outstanding, and will be flagged again if any of them grows.
               </p>
             )}
 
@@ -180,21 +234,21 @@ function AlertBell() {
                 <Row icon={PackageX} tone="text-rose-600"
                      label="Expired stock on the shelf" n={c.expired}
                      preview={data.near_expiry?.filter((b) => new Date(b.expiry_date) < new Date())}
-                     onClick={() => go("/inventory?status=expired")} />
+                     onClick={() => go("/inventory?status=expired", ["expired"])} />
                 <Row icon={PackageX} tone="text-rose-600"
                      label="Out of stock" n={c.out_of_stock}
-                     onClick={() => go("/inventory?status=out")} />
+                     onClick={() => go("/inventory?status=out", ["out_of_stock", "low_stock"])} />
                 <Row icon={CalendarClock} tone="text-amber-600"
                      label={`Expiring within ${data.near_expiry_months} months`} n={c.near_expiry}
                      preview={data.near_expiry}
-                     onClick={() => go("/inventory?status=expiring")} />
+                     onClick={() => go("/inventory?status=expiring", ["near_expiry"])} />
                 <Row icon={Boxes} tone="text-amber-600"
                      label="At or below reorder level" n={c.low_stock}
                      preview={data.low_stock}
-                     onClick={() => go("/inventory?status=low")} />
+                     onClick={() => go("/inventory?status=low", ["low_stock"])} />
                 <Row icon={RefreshCw} tone="text-brand-600"
                      label="Prescriptions due a refill" n={c.refill_due}
-                     onClick={() => go("/prescriptions")} />
+                     onClick={() => go("/prescriptions", ["refill_due"])} />
               </>
             )}
 
