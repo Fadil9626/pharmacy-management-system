@@ -37,6 +37,8 @@ const notifications = require("./controllers/notificationsController");
 const promotions = require("./controllers/promotionsController");
 const clinical = require("./controllers/clinicalController");
 const rtv = require("./controllers/rtvController");
+const updates = require("./lib/updateClient");
+const buildInfo = require("./lib/buildInfo");
 
 const app = express();
 app.use(cors());
@@ -91,7 +93,19 @@ if (!process.env.JWT_SECRET) {
 })();
 
 // ── Routes ──────────────────────────────────────────────────
-app.get("/api/health", (_, res) => res.json({ ok: true }));
+// Health reports the commit THIS PROCESS booted with, not what is checked out
+// on disk. A deploy that copies files but fails to restart — wrong pm2 daemon,
+// a container that never rebuilt — otherwise looks successful while the old
+// code keeps serving. The update applier reads this back to decide whether an
+// install actually took, so it has to be the boot commit or the check is
+// worthless.
+app.get("/api/health", (_, res) => res.json({
+  ok: true,
+  status: "ok",
+  commit: buildInfo.COMMIT,
+  started_at: buildInfo.STARTED_AT,
+  maintenance: updates.getMaintenance(),
+}));
 
 app.post("/api/auth/login", auth.login);
 app.post("/api/auth/reset", auth.resetPassword);   // public (token-gated reset page)
@@ -255,6 +269,28 @@ app.get("/api/subscription/remote/modules", adminApiKey, subscription.remoteGetM
 app.put("/api/subscription/remote/apply", adminApiKey, subscription.remoteApplyModules);
 app.put("/api/subscription/plans/:planKey/pricing", adminApiKey, subscription.updatePlanPricing);
 
+// ── Software updates ────────────────────────────────────────
+// Reading and verifying only. Nothing in this process can change what is
+// installed: install() writes a request to a spool directory that a root-owned
+// systemd unit picks up, and that unit verifies the signature again before it
+// touches anything. A compromised API therefore cannot install code.
+app.get("/api/updates", protect, (_req, res) => res.json(updates.getState()));
+app.get("/api/updates/status", protect, async (_req, res) => res.json(await updates.installStatus()));
+
+app.post("/api/updates/check", protect, authorize("owner", "manager"), async (_req, res) => {
+  res.json(await updates.checkNow());
+});
+
+app.post("/api/updates/install", protect, authorize("owner"), async (req, res) => {
+  const who = req.user?.full_name || req.user?.username || req.user?.email || "an administrator";
+  const result = await updates.requestInstall(who);
+  res.status(result?.ok === false ? 400 : 200).json(result);
+});
+
+// Control Center telling this instance a release is waiting, so an update does
+// not sit unnoticed until the next poll.
+app.post("/api/updates/nudge", adminApiKey, async (_req, res) => res.json(await updates.checkNow()));
+
 // ── Serve built frontend (production) ───────────────────────
 const dist = path.join(__dirname, "..", "frontend", "dist");
 if (fs.existsSync(dist)) {
@@ -268,3 +304,9 @@ if (fs.existsSync(dist)) {
 
 const PORT = process.env.PORT || 5190;
 app.listen(PORT, "0.0.0.0", () => console.log(`🩺 Remedy API on http://0.0.0.0:${PORT}`));
+
+// Ask Control Center what version this install should be running. Failures are
+// logged and retried, never fatal: a pharmacy must keep selling when the vendor
+// is unreachable.
+updates.startUpdateChecks().catch((e) => console.warn("[updates] check loop:", e.message));
+updates.startMaintenanceWatch().catch((e) => console.warn("[updates] maintenance watch:", e.message));

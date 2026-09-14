@@ -44,7 +44,18 @@ say "Installing backend dependencies"
 say "Building frontend"
 ( cd frontend && { npm ci || npm install; } && npm run build )
 
-# 6. (Re)start under PM2 --------------------------------------
+# 6. Stamp the commit BEFORE restarting ------------------------
+# The API reports this at /api/health as the commit it booted with, and the
+# update applier reads it back to decide whether an install actually took.
+# Written before the restart, never after: stamp afterwards and the process
+# boots reading the previous value, reports the old commit, and a good update
+# is judged a failure and rolled back.
+if [ -d .git ]; then
+  git rev-parse HEAD > backend/.deployed-sha
+  say "Stamped $(cut -c1-9 backend/.deployed-sha)"
+fi
+
+# 7. (Re)start under PM2 --------------------------------------
 say "Starting Remedy under PM2"
 if pm2 describe remedy >/dev/null 2>&1; then
   pm2 restart remedy --update-env

@@ -33,3 +33,6 @@ coverage/
 
 # Database backups
 backups/
+
+# Written by deploy.sh; per-install, never committed.
+backend/.deployed-sha
