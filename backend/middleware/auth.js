@@ -1,22 +1,35 @@
 const jwt = require("jsonwebtoken");
 const pool = require("../config/db");
 
-// Small cache of users' current token_version so the per-request revocation
-// check doesn't hit the DB every time. 30s TTL; bumped immediately on logout-all.
-const versionCache = new Map(); // id -> { v, exp }
+// What the request is allowed to be is read from the users table, not from the
+// token. The token says who signed in and which sign-in it was (`tv`); the
+// role, branch and whether the account is still active are looked up, so that
+// deactivating, demoting or moving someone takes effect on their next request
+// rather than when a 12-hour token runs out.
+//
+// A small cache keeps that off the database on every request. Anything that
+// changes a user calls forgetUser(id) so the change is not held back by it.
+const userCache = new Map(); // id -> { row, exp }
 const TTL = 30 * 1000;
 
-async function currentVersion(id) {
-  const hit = versionCache.get(id);
-  if (hit && hit.exp > Date.now()) return hit.v;
-  const { rows } = await pool.query("SELECT token_version FROM users WHERE id = $1", [id]);
-  const v = rows[0] ? rows[0].token_version : null;
-  versionCache.set(id, { v, exp: Date.now() + TTL });
-  return v;
+async function currentUser(id) {
+  const hit = userCache.get(id);
+  if (hit && hit.exp > Date.now()) return hit.row;
+  const { rows } = await pool.query(
+    "SELECT id, role, branch_id, full_name, is_active, token_version FROM users WHERE id = $1", [id]
+  );
+  const row = rows[0] || null;
+  userCache.set(id, { row, exp: Date.now() + TTL });
+  return row;
 }
 
-function bumpTokenVersion(id, v) {
-  versionCache.set(id, { v, exp: Date.now() + TTL });
+function forgetUser(id) {
+  userCache.delete(Number(id));
+}
+
+// Kept for existing callers: they pass the new version after bumping it.
+function bumpTokenVersion(id) {
+  forgetUser(id);
 }
 
 async function protect(req, res, next) {
@@ -29,17 +42,23 @@ async function protect(req, res, next) {
   } catch {
     return res.status(401).json({ message: "Invalid or expired session" });
   }
-  // Session revocation: a token carrying a stale version was logged out elsewhere.
-  if (payload.tv !== undefined) {
-    try {
-      const v = await currentVersion(payload.id);
-      if (v === null) return res.status(401).json({ message: "Account unavailable" });
-      if (v !== payload.tv) return res.status(401).json({ message: "Session ended — please sign in again", code: "SESSION_REVOKED" });
-    } catch {
-      return res.status(401).json({ message: "Could not verify session" });
-    }
+  // Only a session is a session. The two-step sign-in ticket is signed with the
+  // same secret, and was accepted here: a password alone, without the code,
+  // opened every branch's sales, customers and till reports.
+  if (payload.purpose !== undefined || !Number.isInteger(payload.id) || !Number.isInteger(payload.tv)) {
+    return res.status(401).json({ message: "Invalid or expired session" });
   }
-  req.user = payload;
+  let u;
+  try {
+    u = await currentUser(payload.id);
+  } catch {
+    return res.status(401).json({ message: "Could not verify session" });
+  }
+  if (!u || !u.is_active) return res.status(401).json({ message: "Account unavailable", code: "SESSION_REVOKED" });
+  if (u.token_version !== payload.tv) {
+    return res.status(401).json({ message: "Session ended — please sign in again", code: "SESSION_REVOKED" });
+  }
+  req.user = { id: u.id, role: u.role, branch_id: u.branch_id, full_name: u.full_name, tv: u.token_version };
   next();
 }
 
@@ -52,4 +71,4 @@ function authorize(...roles) {
   };
 }
 
-module.exports = { protect, authorize, bumpTokenVersion };
+module.exports = { protect, authorize, bumpTokenVersion, forgetUser };

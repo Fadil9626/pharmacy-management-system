@@ -77,6 +77,13 @@ exports.verify2fa = async (req, res) => {
     const user = rows[0];
     if (!user || !user.is_active) return res.status(401).json({ message: "Account unavailable" });
 
+    // A limit on wrong codes: the ticket only proves the password.
+    const wait = loginGuard.codeRetryAfter(user.id);
+    if (wait > 0) {
+      res.set("Retry-After", String(wait));
+      return res.status(429).json({ message: `Too many wrong codes. Try again in ${Math.ceil(wait / 60)} min.` });
+    }
+
     const clean = String(code).trim().toUpperCase();
     const step = totp.matchStep(user.totp_secret, clean);
     if (step !== null) {
@@ -85,6 +92,7 @@ exports.verify2fa = async (req, res) => {
         return res.status(401).json({ message: "That code was already used — wait for the next one" });
       }
       await pool.query("UPDATE users SET totp_last_step = $1 WHERE id = $2", [step, user.id]);
+      loginGuard.codeReset(user.id);
       return await issueSession(user, res);
     }
     // Backup code (one-time use)
@@ -92,8 +100,10 @@ exports.verify2fa = async (req, res) => {
     const codes = Array.isArray(user.backup_codes) ? user.backup_codes : [];
     if (codes.includes(h)) {
       await pool.query("UPDATE users SET backup_codes = $1 WHERE id = $2", [JSON.stringify(codes.filter((c) => c !== h)), user.id]);
+      loginGuard.codeReset(user.id);
       return await issueSession(user, res);
     }
+    loginGuard.codeFail(user.id);
     return res.status(401).json({ message: "Incorrect code" });
   } catch (e) {
     res.status(500).json({ message: e.message });
@@ -206,12 +216,15 @@ exports.changePassword = async (req, res) => {
 exports.sendResetLink = async (req, res) => {
   const id = Number(req.params.id);
   try {
+    const refused = await require("./usersController").guardOwnerAccount(req, id);
+    if (refused) return res.status(403).json({ message: refused });
     const u = (await pool.query("SELECT id, email, full_name FROM users WHERE id = $1 AND is_active = true", [id])).rows[0];
     if (!u) return res.status(404).json({ message: "User not found" });
     if (!u.email) return res.status(400).json({ message: "This user has no email on file — add one, or use 'Set temporary password' instead." });
     const token = crypto.randomBytes(32).toString("hex");
     await pool.query("UPDATE users SET reset_token_hash = $1, reset_expires_at = NOW() + INTERVAL '1 hour' WHERE id = $2", [sha256(token), u.id]);
-    const origin = req.headers.origin || `${req.protocol}://${req.headers.host}`;
+    // APP_URL when set: the request's own headers are whatever the sender put there.
+    const origin = (process.env.APP_URL || "").replace(/\/+$/, "") || req.headers.origin || `${req.protocol}://${req.headers.host}`;
     const link = `${origin}/reset?token=${token}`;
     const sent = await notify({
       channel: "email", to: u.email, type: "password_reset", ref_type: "user", ref_id: u.id,

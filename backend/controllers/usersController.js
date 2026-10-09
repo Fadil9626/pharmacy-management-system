@@ -2,6 +2,19 @@ const bcrypt = require("bcryptjs");
 const pool = require("../config/db");
 const { logAudit } = require("../lib/audit");
 const { validatePassword } = require("../lib/passwordPolicy");
+const { forgetUser } = require("../middleware/auth");
+
+// Owner accounts are the owner's to manage. "Manage staff" is a permission a
+// manager (or anyone the owner grants it to) holds, and before this check it
+// was enough to promote an account to owner, deactivate the owner, or set the
+// owner's password and sign in as them.
+async function guardOwnerAccount(req, id) {
+  if (req.user.role === "owner") return null;
+  const t = (await pool.query("SELECT role FROM users WHERE id = $1", [id])).rows[0];
+  if (t && t.role === "owner") return "Only an owner can change an owner's account";
+  return null;
+}
+exports.guardOwnerAccount = guardOwnerAccount;
 
 const ROLES = ["owner", "manager", "pharmacist", "cashier"];
 
@@ -55,7 +68,12 @@ exports.update = async (req, res) => {
     return res.status(400).json({ message: "You can't deactivate your own account" });
   if (id === req.user.id && role && role !== req.user.role)
     return res.status(400).json({ message: "You can't change your own role" });
+  if (role === "owner" && req.user.role !== "owner")
+    return res.status(403).json({ message: "Only an owner can make someone an owner" });
   try {
+    const refused = await guardOwnerAccount(req, id);
+    if (refused) return res.status(403).json({ message: refused });
+    const before = (await pool.query("SELECT role, is_active FROM users WHERE id = $1", [id])).rows[0];
     const { rows } = await pool.query(
       `UPDATE users SET
          full_name = COALESCE($1, full_name),
@@ -68,6 +86,12 @@ exports.update = async (req, res) => {
        typeof is_active === "boolean" ? is_active : null, id]
     );
     if (!rows.length) return res.status(404).json({ message: "User not found" });
+    // A changed role or a deactivation ends the person's sessions; a branch
+    // move needs no sign-out, the next request reads the new branch.
+    if (before && (before.role !== rows[0].role || (before.is_active && !rows[0].is_active))) {
+      await pool.query("UPDATE users SET token_version = token_version + 1 WHERE id = $1", [id]);
+    }
+    forgetUser(id);
     logAudit(req, "user_update", "user", id, { name: rows[0].full_name, role: rows[0].role, is_active: rows[0].is_active });
     res.json(rows[0]);
   } catch (e) {
@@ -81,9 +105,14 @@ exports.resetPassword = async (req, res) => {
   const pwErr = validatePassword(password);
   if (pwErr) return res.status(400).json({ message: pwErr });
   try {
+    const refused = await guardOwnerAccount(req, id);
+    if (refused) return res.status(403).json({ message: refused });
     const hash = await bcrypt.hash(password, 10);
-    const { rowCount } = await pool.query("UPDATE users SET password_hash = $1 WHERE id = $2", [hash, id]);
+    // A new password ends the sessions signed in with the old one.
+    const { rowCount } = await pool.query(
+      "UPDATE users SET password_hash = $1, token_version = token_version + 1 WHERE id = $2", [hash, id]);
     if (!rowCount) return res.status(404).json({ message: "User not found" });
+    forgetUser(id);
     logAudit(req, "user_password_reset", "user", id, null);
     res.json({ success: true });
   } catch (e) {

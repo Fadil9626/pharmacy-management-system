@@ -43,6 +43,13 @@ const updates = require("./lib/updateClient");
 const buildInfo = require("./lib/buildInfo");
 
 const app = express();
+// Behind a reverse proxy, set TRUST_PROXY (e.g. "loopback" or "1") so req.ip is
+// the visitor's address; otherwise it is the connection's own address and any
+// X-Forwarded-For header is ignored. The sign-in limiter relies on this.
+if (process.env.TRUST_PROXY) {
+  const v = process.env.TRUST_PROXY;
+  app.set("trust proxy", /^\d+$/.test(v) ? Number(v) : v === "true" ? true : v);
+}
 // CORS: an allow-list, not a wildcard.
 //
 // `cors()` with no options answers every origin. Auth here is a Bearer token in
