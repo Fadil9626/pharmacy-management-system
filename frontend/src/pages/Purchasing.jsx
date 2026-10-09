@@ -249,6 +249,7 @@ function ReorderTab({ data, onOrder }) {
             <tr className="border-b border-sage-200 text-left text-xs uppercase tracking-wide text-sage-400 dark:border-sage-800">
               <th className="px-5 py-3 font-medium">Product</th>
               <th className="px-5 py-3 font-medium text-right">In stock</th>
+              <th className="px-5 py-3 font-medium text-right" title="Still to come on open orders — already counted in the suggestion">On order</th>
               <th className="px-5 py-3 font-medium text-right">Sells/day</th>
               <th className="px-5 py-3 font-medium text-right">Runs out</th>
               <th className="px-5 py-3 font-medium text-right">Suggested</th>
@@ -263,6 +264,7 @@ function ReorderTab({ data, onOrder }) {
                   <span className={`font-semibold ${r.stock <= r.reorder_level ? "text-amber-600 dark:text-amber-400" : "text-sage-700 dark:text-sage-200"}`}>{r.stock}</span>
                   <span className="ml-1 text-xs text-sage-400">{r.unit}</span>
                 </td>
+                <td className="px-5 py-3.5 text-right tabular-nums text-sage-600 dark:text-sage-300">{r.on_order || "—"}</td>
                 <td className="px-5 py-3.5 text-right tabular-nums text-sage-600 dark:text-sage-300">{r.daily_rate || 0}</td>
                 <td className="px-5 py-3.5 text-right">{daysChip(r.days_left)}</td>
                 <td className="px-5 py-3.5 text-right font-semibold text-brand-700 dark:text-brand-400">{r.suggested_qty}</td>

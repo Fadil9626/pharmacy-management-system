@@ -54,41 +54,56 @@ exports.vatReturn = async (req, res) => {
 // scheduled daily/weekly report). Recipients default to the configured alert
 // emails, else the pharmacy email.
 exports.emailSummary = async (req, res) => {
-  const { notify, getConfig } = require("../lib/notify");
   const period = req.body?.period === "week" ? "week" : "today";
-  const days = period === "week" ? 7 : 1;
   try {
-    const branchId = branchOf(req);
-    const s = (await pool.query("SELECT pharmacy_name, currency_symbol, email FROM settings WHERE id=1")).rows[0] || {};
-    const sym = s.currency_symbol || "";
-    const m = (n) => `${sym}${Number(n || 0).toFixed(2)}`;
-    const sum = (await pool.query(
-      `SELECT COUNT(*)::int txns, COALESCE(SUM(total),0)::float revenue, COALESCE(SUM(tax),0)::float vat,
-              COALESCE(SUM(discount),0)::float discounts
-       FROM sales WHERE created_at >= NOW() - ($1||' days')::interval AND ($2::int IS NULL OR branch_id=$2)`,
-      [String(days), branchId])).rows[0];
-    const top = (await pool.query(
-      `SELECT si.name, SUM(si.qty)::int qty, SUM(si.line_total)::float total
-       FROM sale_items si JOIN sales s ON si.sale_id=s.id
-       WHERE s.created_at >= NOW() - ($1||' days')::interval AND ($2::int IS NULL OR s.branch_id=$2)
-       GROUP BY si.name ORDER BY total DESC LIMIT 5`, [String(days), branchId])).rows;
-
-    const cfg = await getConfig();
-    const recipients = req.body?.recipients?.length ? req.body.recipients
-      : (cfg.recipients?.emails?.length ? cfg.recipients.emails : [s.email].filter(Boolean));
-    if (!recipients.length) return res.status(400).json({ message: "No recipient — set an alert email in Notifications first." });
-
-    const body =
-      `${s.pharmacy_name || "Remedy"} — ${period === "week" ? "Weekly" : "Daily"} sales summary\n\n` +
-      `Sales: ${sum.txns} · Revenue: ${m(sum.revenue)} · VAT: ${m(sum.vat)} · Discounts: ${m(sum.discounts)}\n\n` +
-      `Top products:\n` + (top.length ? top.map((t) => `  • ${t.name}: ${t.qty} sold, ${m(t.total)}`).join("\n") : "  (none)");
-    let sent = 0;
-    for (const to of recipients) { await notify({ channel: "email", to, type: "report", subject: `${s.pharmacy_name || "Remedy"} — ${period} sales summary`, body }); sent++; }
-    res.json({ ok: true, recipients: sent, revenue: sum.revenue });
+    // To the configured alert emails. It also accepted any list of addresses
+    // in the request, which sent the pharmacy's figures wherever it was told.
+    const r = await sendSummary({ period, branchId: branchOf(req) });
+    res.json({ ok: true, recipients: r.sent, revenue: r.revenue });
   } catch (e) {
-    res.status(500).json({ message: e.message });
+    res.status(e.status || 500).json({ message: e.message });
   }
 };
+
+/** The sales summary email — "Send now" on Reports, and the daily one from lib/scheduler.js. */
+async function sendSummary({ period = "today", branchId = null } = {}) {
+  const { notify, getConfig } = require("../lib/notify");
+  const days = period === "week" ? 7 : 1;
+  const s = (await pool.query("SELECT pharmacy_name, currency_symbol, email FROM settings WHERE id=1")).rows[0] || {};
+  const sym = s.currency_symbol || "";
+  const m = (n) => `${sym}${Number(n || 0).toFixed(2)}`;
+  const sum = (await pool.query(
+    `SELECT COUNT(*)::int txns, COALESCE(SUM(total),0)::float revenue, COALESCE(SUM(tax),0)::float vat,
+            COALESCE(SUM(discount),0)::float discounts
+     FROM sales WHERE created_at >= NOW() - ($1||' days')::interval AND ($2::int IS NULL OR branch_id=$2)`,
+    [String(days), branchId])).rows[0];
+  const ref = (await pool.query(
+    `SELECT COUNT(*)::int n, COALESCE(SUM(total),0)::float amount FROM sale_returns
+      WHERE created_at >= NOW() - ($1||' days')::interval AND ($2::int IS NULL OR branch_id=$2)`,
+    [String(days), branchId])).rows[0];
+  const top = (await pool.query(
+    `SELECT si.name, SUM(si.qty)::int qty, SUM(si.line_total)::float total
+     FROM sale_items si JOIN sales s ON si.sale_id=s.id
+     WHERE s.created_at >= NOW() - ($1||' days')::interval AND ($2::int IS NULL OR s.branch_id=$2)
+     GROUP BY si.name ORDER BY total DESC LIMIT 5`, [String(days), branchId])).rows;
+
+  const cfg = await getConfig();
+  const recipients = cfg?.recipients?.emails?.length ? cfg.recipients.emails : [s.email].filter(Boolean);
+  if (!recipients.length) {
+    const e = new Error("No recipient — set an alert email in Notifications first.");
+    e.status = 400;
+    throw e;
+  }
+  const body =
+    `${s.pharmacy_name || "Remedy"} — ${period === "week" ? "Weekly" : "Daily"} sales summary\n\n` +
+    `Sales: ${sum.txns} · Revenue: ${m(sum.revenue)} · VAT: ${m(sum.vat)} · Discounts: ${m(sum.discounts)}\n` +
+    `Refunds: ${ref.n} · ${m(ref.amount)} · Net: ${m(sum.revenue - ref.amount)}\n\n` +
+    `Top products:\n` + (top.length ? top.map((t) => `  • ${t.name}: ${t.qty} sold, ${m(t.total)}`).join("\n") : "  (none)");
+  let sent = 0;
+  for (const to of recipients) { await notify({ channel: "email", to, type: "report", subject: `${s.pharmacy_name || "Remedy"} — ${period} sales summary`, body }); sent++; }
+  return { sent, revenue: sum.revenue };
+}
+exports.sendSummary = sendSummary;
 
 // ── Sales analytics for a date range ────────────────────────
 exports.sales = async (req, res) => {

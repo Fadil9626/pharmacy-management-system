@@ -500,6 +500,18 @@ exports.createReturn = async (req, res) => {
 
     await client.query("COMMIT");
     logAudit(req, "refund", "sale", saleId, { return: receiptNo, total, method: refund_method, items: retLines.length, restocked: !!restock });
+    // A large refund tells the alert recipients (after the refund is done).
+    const notes = require("./notificationsController");
+    notes.thresholds().then((th) => {
+      if (th.large_refund > 0 && total >= th.large_refund) {
+        notes.alertOps("large_refund", {
+          ref_id: retId,
+          subject: `Refund of ${total.toFixed(2)} (${receiptNo})`,
+          body: `${req.user.full_name || "Staff"} refunded ${total.toFixed(2)} by ${refund_method} against sale ${sale.receipt_no}.` +
+            `${reason ? `\nReason: ${reason}` : ""}`,
+        });
+      }
+    }).catch(() => {});
     res.status(201).json({
       id: retId, receipt_no: receiptNo, sale_receipt: sale.receipt_no,
       subtotal, tax: propTax, total, refund_method, restocked: !!restock,

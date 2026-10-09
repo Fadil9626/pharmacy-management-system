@@ -106,6 +106,17 @@ exports.close = async (req, res) => {
       [t.expected_cash, counted, variance, note || null, id]
     );
     res.json({ ...rows[0], ...t, variance });
+    // After answering: a till that didn't balance tells the alert recipients.
+    const notes = require("./notificationsController");
+    const limit = (await notes.thresholds()).till_variance;
+    if (Math.abs(variance) > 0 && Math.abs(variance) >= limit) {
+      notes.alertOps("till_variance", {
+        ref_id: id,
+        subject: `Till ${variance < 0 ? "short" : "over"} by ${Math.abs(variance).toFixed(2)}`,
+        body: `${req.user.full_name || "A cashier"} closed their till ${variance < 0 ? "short" : "over"} by ${Math.abs(variance).toFixed(2)}.\n` +
+          `Expected ${t.expected_cash.toFixed(2)}, counted ${counted.toFixed(2)}.${note ? `\nNote: ${note}` : ""}`,
+      });
+    }
   } catch (e) {
     res.status(500).json({ message: e.message });
   }

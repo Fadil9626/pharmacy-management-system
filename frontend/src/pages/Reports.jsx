@@ -358,7 +358,7 @@ export default function Reports() {
             <ValTile label="Net VAT due" value={money0(vat.net_vat_due)} accent />
           </div>
         )}
-        <p className="mt-3 text-xs text-sage-400">VAT for the selected period. The daily/weekly email summary sends to your alert recipients (Settings → Notifications) — cron the <code>/api/reports/email-summary</code> endpoint to automate it.</p>
+        <p className="mt-3 text-xs text-sage-400">VAT for the selected period. The email summary sends to your alert recipients. To get it every day by itself, switch on the daily summary in Settings → Notifications.</p>
       </div>
 
       {/* Public-health surveillance — case signals from tagged dispensing */}

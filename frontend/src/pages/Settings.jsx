@@ -299,6 +299,8 @@ function NotificationsTab({ isOwner }) {
 
   const setCh = (ch, k) => (e) => setCfg({ ...cfg, [ch]: { ...cfg[ch], [k]: e.target.type === "checkbox" ? e.target.checked : e.target.value } });
   const setEvent = (k) => (e) => setCfg({ ...cfg, events: { ...cfg.events, [k]: e.target.checked } });
+  const setIn = (group, k) => (e) => setCfg({ ...cfg, [group]: { ...cfg[group], [k]: e.target.value } });
+  const check = "h-4 w-4 rounded border-sage-300 text-brand-600 focus:ring-brand-500";
 
   const save = async () => {
     setBusy(true); setErr(""); setSaved(false);
@@ -314,6 +316,8 @@ function NotificationsTab({ isOwner }) {
         events: cfg.events,
         recipients: { emails: splitList(emailsText), phones: splitList(phonesText) },
         dedupe_hours: Number(cfg.dedupe_hours) || 0,
+        thresholds: cfg.thresholds,
+        schedule: cfg.schedule,
       };
       const c = await api("/api/notifications/config", { method: "PUT", body });
       setCfg({ ...c, email: { ...c.email, api_key: "", smtp_pass: "" }, sms: { ...c.sms, api_key: "" } });
@@ -405,13 +409,54 @@ function NotificationsTab({ isOwner }) {
 
         <div className="rounded-xl border border-sage-200 p-4 dark:border-sage-800">
           <div className="font-medium text-sage-800 dark:text-sage-100">Automatic alerts</div>
+          <p className="mt-1 text-xs text-sage-400">Checked by Remedy on a schedule — nobody has to press anything.</p>
           <div className="mt-3 flex flex-wrap gap-4">
-            {[["low_stock", "Low stock"], ["near_expiry", "Near expiry"], ["refill_due", "Refill reminders"]].map(([k, lbl]) => (
+            {[["low_stock", "Low stock"], ["near_expiry", "Near expiry"], ["refill_due", "Refill reminders"], ["overdue_accounts", "Overdue customer accounts"]].map(([k, lbl]) => (
               <label key={k} className="flex items-center gap-2 text-sm text-sage-700 dark:text-sage-300">
-                <input type="checkbox" checked={!!cfg.events[k]} onChange={setEvent(k)} disabled={!isOwner}
-                  className="h-4 w-4 rounded border-sage-300 text-brand-600 focus:ring-brand-500" /> {lbl}
+                <input type="checkbox" checked={!!cfg.events[k]} onChange={setEvent(k)} disabled={!isOwner} className={check} /> {lbl}
               </label>
             ))}
+          </div>
+          <div className="mt-3 grid gap-3 sm:grid-cols-2">
+            <Field label="Check every (hours, 0 = only when asked)">
+              <input type="number" min="0" max="168" className="input" value={cfg.schedule?.alerts_every_hours ?? 6} onChange={setIn("schedule", "alerts_every_hours")} disabled={!isOwner} />
+            </Field>
+            <Field label="An account is overdue after (days without a payment)">
+              <input type="number" min="1" className="input" value={cfg.thresholds?.overdue_days ?? 30} onChange={setIn("thresholds", "overdue_days")} disabled={!isOwner} />
+            </Field>
+          </div>
+
+          <div className="mt-5 font-medium text-sage-800 dark:text-sage-100">As it happens</div>
+          <div className="mt-3 grid gap-3 sm:grid-cols-2">
+            <div className="space-y-2">
+              <label className="flex items-center gap-2 text-sm text-sage-700 dark:text-sage-300">
+                <input type="checkbox" checked={!!cfg.events.till_variance} onChange={setEvent("till_variance")} disabled={!isOwner} className={check} />
+                A till closes over or short
+              </label>
+              <Field label="…by at least">
+                <input type="number" min="0" step="0.01" className="input" value={cfg.thresholds?.till_variance ?? 100} onChange={setIn("thresholds", "till_variance")} disabled={!isOwner} />
+              </Field>
+            </div>
+            <div className="space-y-2">
+              <label className="flex items-center gap-2 text-sm text-sage-700 dark:text-sage-300">
+                <input type="checkbox" checked={!!cfg.events.large_refund} onChange={setEvent("large_refund")} disabled={!isOwner} className={check} />
+                A large refund is made
+              </label>
+              <Field label="…of at least">
+                <input type="number" min="0" step="0.01" className="input" value={cfg.thresholds?.large_refund ?? 1000} onChange={setIn("thresholds", "large_refund")} disabled={!isOwner} />
+              </Field>
+            </div>
+          </div>
+
+          <div className="mt-5 font-medium text-sage-800 dark:text-sage-100">Daily sales summary</div>
+          <div className="mt-3 grid gap-3 sm:grid-cols-2 sm:items-end">
+            <label className="flex items-center gap-2 text-sm text-sage-700 dark:text-sage-300">
+              <input type="checkbox" checked={!!cfg.events.daily_summary} onChange={setEvent("daily_summary")} disabled={!isOwner} className={check} />
+              Email the day's sales summary to the alert emails
+            </label>
+            <Field label="Send at (hour, 0–23, server time)">
+              <input type="number" min="0" max="23" className="input" value={cfg.schedule?.summary_hour ?? 20} onChange={setIn("schedule", "summary_hour")} disabled={!isOwner} />
+            </Field>
           </div>
           <div className="mt-4 grid gap-3 sm:grid-cols-2">
             <Field label="Alert emails (comma-separated)">

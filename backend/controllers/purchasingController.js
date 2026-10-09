@@ -42,14 +42,22 @@ exports.reorderSuggestions = async (req, res) => {
            AND ($1::int IS NULL OR s.branch_id = $1)
          GROUP BY si.product_id
        )
-       SELECT p.id, p.name, p.unit, p.reorder_level,
+       , on_order AS (
+         -- Still to come on open orders, so a suggestion doesn't order it twice.
+         SELECT i.product_id, SUM(GREATEST(i.qty_ordered - COALESCE(i.qty_received, 0), 0))::int AS units
+         FROM purchase_order_items i JOIN purchase_orders po ON po.id = i.po_id
+         WHERE po.status IN ('draft', 'ordered', 'partial') AND ($1::int IS NULL OR po.branch_id = $1)
+         GROUP BY i.product_id
+       )
+       SELECT p.id, p.name, p.unit, p.reorder_level, COALESCE(oo.units, 0)::int AS on_order,
               COALESCE(SUM(b.quantity) FILTER (WHERE b.expiry_date IS NULL OR b.expiry_date >= CURRENT_DATE), 0)::int AS stock,
               COALESCE(so.units, 0)::numeric AS sold_window
        FROM products p
        LEFT JOIN product_batches b ON b.product_id = p.id AND ($1::int IS NULL OR b.branch_id = $1)
        LEFT JOIN sold so ON so.product_id = p.id
+       LEFT JOIN on_order oo ON oo.product_id = p.id
        WHERE p.is_active = true
-       GROUP BY p.id, so.units`,
+       GROUP BY p.id, so.units, oo.units`,
       [branchId, String(windowDays)]
     );
 
@@ -57,9 +65,11 @@ exports.reorderSuggestions = async (req, res) => {
       .map((r) => {
         const rate = Math.round((Number(r.sold_window) / windowDays) * 100) / 100; // units/day
         const daysLeft = rate > 0 ? Math.round((r.stock / rate) * 10) / 10 : null;
-        let suggested = Math.max(0, Math.ceil(rate * cover) - r.stock);
-        if (r.stock <= r.reorder_level) suggested = Math.max(suggested, r.reorder_level * 2 - r.stock, 1);
-        return { id: r.id, name: r.name, unit: r.unit, reorder_level: r.reorder_level, stock: r.stock,
+        // What will be on the shelf once open orders arrive.
+        const coming = r.stock + r.on_order;
+        let suggested = Math.max(0, Math.ceil(rate * cover) - coming);
+        if (coming <= r.reorder_level) suggested = Math.max(suggested, r.reorder_level * 2 - coming, 1);
+        return { id: r.id, name: r.name, unit: r.unit, reorder_level: r.reorder_level, stock: r.stock, on_order: r.on_order,
                  sold_window: Number(r.sold_window), daily_rate: rate, days_left: daysLeft, suggested_qty: Math.max(0, suggested) };
       })
       // Needs ordering if below reorder level OR projected to run out within the cover window.

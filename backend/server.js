@@ -397,5 +397,7 @@ dbReady
   .then(() => {
     updates.startUpdateChecks().catch((e) => console.warn("[updates] check loop:", e.message));
     updates.startMaintenanceWatch().catch((e) => console.warn("[updates] maintenance watch:", e.message));
+    // Scheduled alerts and the daily summary (Settings → Notifications).
+    if (process.env.NODE_ENV !== "test") require("./lib/scheduler").startScheduler();
   })
   .catch(() => { /* the migration block exits the process itself */ });
