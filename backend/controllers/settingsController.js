@@ -17,6 +17,10 @@ exports.get = async (_req, res) => {
 
 const numOrNull = (v) => (v != null && v !== "" ? Number(v) : null);
 
+// A field the request leaves out keeps its value; an empty string clears it.
+// Text fields used to be set to whatever was sent, so a save that sent only
+// one field (the Pricing page sends just the base currency) wiped the address,
+// phone, email, website and receipt text.
 exports.update = async (req, res) => {
   const {
     pharmacy_name, currency_code, currency_symbol,
@@ -24,7 +28,7 @@ exports.update = async (req, res) => {
     base_currency, pricing_mode,
     near_expiry_months, low_stock_default, loyalty_points_per_unit, loyalty_redeem_value,
     logo, theme, brand_color, theme_config,
-    receipt_paper, label_size, barcode_prefix, barcode_auto,
+    receipt_paper, label_size, barcode_prefix, barcode_auto, require_expiry_on_receive,
   } = req.body || {};
   if (pricing_mode && !["fixed", "market"].includes(pricing_mode))
     return res.status(400).json({ message: "Invalid pricing mode" });
@@ -35,14 +39,14 @@ exports.update = async (req, res) => {
          currency_code           = COALESCE($2, currency_code),
          currency_symbol         = COALESCE($3, currency_symbol),
          tax_percent             = COALESCE($4, tax_percent),
-         receipt_footer          = $5,
-         address                 = $6,
-         phone                   = $7,
+         receipt_footer          = COALESCE($5, receipt_footer),
+         address                 = COALESCE($6, address),
+         phone                   = COALESCE($7, phone),
          base_currency           = COALESCE($8, base_currency),
          pricing_mode            = COALESCE($9, pricing_mode),
-         email                   = $10,
-         website                 = $11,
-         receipt_header          = $12,
+         email                   = COALESCE($10, email),
+         website                 = COALESCE($11, website),
+         receipt_header          = COALESCE($12, receipt_header),
          near_expiry_months      = COALESCE($13, near_expiry_months),
          low_stock_default       = COALESCE($14, low_stock_default),
          loyalty_points_per_unit = COALESCE($15, loyalty_points_per_unit),
@@ -55,6 +59,7 @@ exports.update = async (req, res) => {
          label_size              = COALESCE($22, label_size),
          barcode_prefix          = CASE WHEN $23::text IS NULL THEN barcode_prefix ELSE $23::text END,
          barcode_auto            = COALESCE($24, barcode_auto),
+         require_expiry_on_receive = COALESCE($25, require_expiry_on_receive),
          updated_at              = NOW()
        WHERE id = 1 RETURNING *`,
       [
@@ -82,6 +87,7 @@ exports.update = async (req, res) => {
         label_size || null,
         barcode_prefix === undefined ? null : barcode_prefix,
         typeof barcode_auto === "boolean" ? barcode_auto : null,
+        typeof require_expiry_on_receive === "boolean" ? require_expiry_on_receive : null,
       ]
     );
     logAudit(req, "settings_update", "settings", 1, { fields: Object.keys(req.body || {}) });

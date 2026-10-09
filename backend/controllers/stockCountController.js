@@ -1,5 +1,5 @@
 const pool = require("../config/db");
-const { effectiveBranch } = require("../lib/context");
+const { effectiveBranch, canSeeBranch } = require("../lib/context");
 const { logAudit } = require("../lib/audit");
 
 // Post a physical count: reconcile system stock to counted figures.
@@ -27,6 +27,7 @@ exports.create = async (req, res) => {
       const productId = Number(it.product_id);
       const cq = Number(it.counted_qty);
       if (!productId || it.counted_qty === "" || it.counted_qty == null || Number.isNaN(cq) || cq < 0) continue;
+      if (!Number.isInteger(cq)) throw new Error("Counts are whole units");
 
       const batches = await client.query(
         `SELECT * FROM product_batches WHERE product_id = $1 AND branch_id = $2
@@ -54,10 +55,11 @@ exports.create = async (req, res) => {
         if (newest) {
           await client.query("UPDATE product_batches SET quantity = quantity + $1 WHERE id = $2", [variance, newest.id]);
         } else {
-          await client.query(
-            "INSERT INTO product_batches (product_id, branch_id, quantity, cost_price, selling_price) VALUES ($1,$2,$3,0,0)",
-            [productId, branchId, variance]
-          );
+          // Found stock with no batch on record has no cost, price, batch number
+          // or expiry. It used to be added as a zero-cost batch that never
+          // expires — sellable forever, worth nothing in the books. Receive it
+          // properly instead, with its batch and expiry.
+          throw new Error(`${pname}: ${variance} found but there is no batch on record at this branch — receive it into stock with its batch number and expiry instead`);
         }
       }
 
@@ -119,7 +121,7 @@ exports.get = async (req, res) => {
        WHERE c.id = $1`,
       [req.params.id]
     );
-    if (!head.rows[0]) return res.status(404).json({ message: "Count not found" });
+    if (!head.rows[0] || !canSeeBranch(req, head.rows[0].branch_id)) return res.status(404).json({ message: "Count not found" });
     const items = await pool.query(
       "SELECT * FROM stock_count_items WHERE count_id = $1 ORDER BY (variance <> 0) DESC, name",
       [req.params.id]

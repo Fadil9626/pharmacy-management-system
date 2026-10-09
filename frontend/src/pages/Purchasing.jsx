@@ -10,6 +10,7 @@ import {
 const STATUS = {
   draft: "bg-sage-100 text-sage-600 dark:bg-sage-800 dark:text-sage-300",
   ordered: "bg-sky-100 text-sky-700 dark:bg-sky-900/40 dark:text-sky-300",
+  partial: "bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300",
   received: "bg-brand-100 text-brand-700 dark:bg-brand-900/40 dark:text-brand-300",
   cancelled: "bg-rose-100 text-rose-600 dark:bg-rose-900/40 dark:text-rose-300",
 };
@@ -173,7 +174,7 @@ function OrdersTab({ pos, onReceive, onReload }) {
                   <td className="px-5 py-3.5 text-sage-600 dark:text-sage-300">{po.supplier_name || "—"}</td>
                   <td className="px-5 py-3.5 text-center text-sage-600 dark:text-sage-300">{po.line_count}</td>
                   <td className="px-5 py-3.5 text-right font-medium text-sage-900 dark:text-sage-50">{money(po.total_cost)}</td>
-                  <td className="px-5 py-3.5"><span className={`chip capitalize ${STATUS[po.status]}`}>{po.status}</span></td>
+                  <td className="px-5 py-3.5"><span className={`chip capitalize ${STATUS[po.status]}`}>{po.status === "partial" ? "Part received" : po.status}</span></td>
                   <td className="px-5 py-3.5">
                     <div className="flex justify-end gap-2">
                       {po.status !== "received" && po.status !== "cancelled" && (
@@ -181,7 +182,8 @@ function OrdersTab({ pos, onReceive, onReload }) {
                           <button className="btn-primary !px-3 !py-1.5 text-xs" onClick={() => onReceive(po.id)}>
                             <PackageCheck className="h-3.5 w-3.5" /> Receive
                           </button>
-                          <button className="btn-ghost !px-2 !py-1.5 text-xs text-sage-400 hover:text-rose-500" onClick={() => setCancelId(po.id)}>
+                          <button className="btn-ghost !px-2 !py-1.5 text-xs text-sage-400 hover:text-rose-500" onClick={() => setCancelId(po.id)}
+                            title={po.status === "partial" ? "Close the order with what has arrived" : "Cancel the order"}>
                             <Ban className="h-3.5 w-3.5" />
                           </button>
                         </>
@@ -199,8 +201,16 @@ function OrdersTab({ pos, onReceive, onReload }) {
       </div>
     </div>
     {cancelId && (
-      <ConfirmModal danger title="Cancel order" confirmLabel="Cancel order"
-        message="This purchase order will be marked cancelled." onConfirm={cancel} onClose={() => setCancelId(null)} />
+      (() => {
+        const part = pos.find((o) => o.id === cancelId)?.status === "partial";
+        return (
+          <ConfirmModal danger title={part ? "Close order" : "Cancel order"} confirmLabel={part ? "Close order" : "Cancel order"}
+            message={part
+              ? "Part of this order has arrived. Closing it keeps what came (and what is owed for it) and stops waiting for the rest."
+              : "This purchase order will be marked cancelled."}
+            onConfirm={cancel} onClose={() => setCancelId(null)} />
+        );
+      })()
     )}
     </>
   );
@@ -566,7 +576,9 @@ function ReceiveModal({ poId, onClose, onReceived }) {
       setLines(
         data.items.map((it) => ({
           id: it.id, product_name: it.product_name, unit: it.unit,
-          qty_received: it.qty_ordered,
+          ordered: it.qty_ordered, already: it.qty_received || 0,
+          // What is still to come — an order can arrive in parts.
+          qty_received: Math.max(0, it.qty_ordered - (it.qty_received || 0)),
           cost_price: it.cost_price, selling_price: it.selling_price,
           batch_no: it.batch_no || "", expiry_date: it.expiry_date ? it.expiry_date.slice(0, 10) : "",
         }))
@@ -604,6 +616,7 @@ function ReceiveModal({ poId, onClose, onReceived }) {
         <div className="space-y-4">
           <p className="text-sm text-sage-500 dark:text-sage-400">
             Confirm what arrived — quantities, prices, batch numbers and expiry. Receiving adds these to stock (FEFO).
+            If only part of the order came, enter what came: the rest stays on order.
           </p>
           <div className="space-y-2">
             <div className="hidden gap-2 px-1 text-xs font-medium uppercase tracking-wide text-sage-400 sm:grid sm:grid-cols-[1fr_70px_80px_80px_100px_120px]">
@@ -613,6 +626,9 @@ function ReceiveModal({ poId, onClose, onReceived }) {
               <div key={l.id} className="grid grid-cols-2 gap-2 rounded-xl border border-sage-200 p-2 dark:border-sage-800 sm:grid-cols-[1fr_70px_80px_80px_100px_120px] sm:items-center sm:border-0 sm:p-0">
                 <div className="col-span-2 text-sm font-medium text-sage-900 dark:text-sage-50 sm:col-span-1">
                   {l.product_name} <span className="text-xs text-sage-400">{l.unit}</span>
+                  {l.already > 0 && (
+                    <div className="text-xs text-sage-400">{l.already} of {l.ordered} already received</div>
+                  )}
                 </div>
                 <input type="number" min="0" className="input text-right" value={l.qty_received} onChange={(e) => setLine(i, "qty_received", e.target.value)} />
                 <input type="number" min="0" step="0.01" className="input text-right" value={l.cost_price} onChange={(e) => setLine(i, "cost_price", e.target.value)} />

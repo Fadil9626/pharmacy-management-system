@@ -20,11 +20,13 @@ const PERMISSIONS = [
 
   { key: "customers.manage",    label: "Add & edit customers",         group: "Customers" },
   { key: "customers.payment",   label: "Take account payments",        group: "Customers" },
+  { key: "customers.credit",    label: "Set credit limits",            group: "Customers" },
 
   { key: "controlled.dispense", label: "Dispense controlled drugs",    group: "Controlled" },
 
   { key: "finance.expense",     label: "Record expenses",              group: "Finance" },
   { key: "finance.reconcile",   label: "Close tills & shift history",  group: "Finance" },
+  { key: "finance.payout",      label: "Pay cash out of the till",     group: "Finance" },
 
   { key: "pricing.manage",      label: "Manage market rates",          group: "Pricing" },
   { key: "reports.view",        label: "View reports",                 group: "Reports" },

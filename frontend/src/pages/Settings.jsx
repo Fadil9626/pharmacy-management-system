@@ -179,6 +179,11 @@ export default function Settings() {
                 className="h-4 w-4 rounded border-sage-300 text-brand-600 focus:ring-brand-500" />
               Auto-generate a barcode for every new product
             </label>
+            <label className="flex items-center gap-2.5 text-sm text-sage-700 dark:text-sage-300">
+              <input type="checkbox" checked={f.require_expiry_on_receive ?? true} onChange={(e) => setF({ ...f, require_expiry_on_receive: e.target.checked })} disabled={!canEdit}
+                className="h-4 w-4 rounded border-sage-300 text-brand-600 focus:ring-brand-500" />
+              Require an expiry date when receiving stock
+            </label>
             <p className="text-xs text-sage-400">
               Batches expiring within the window are flagged on the dashboard, inventory and reports. New products start at the default reorder level.
             </p>

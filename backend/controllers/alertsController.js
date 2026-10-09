@@ -1,4 +1,5 @@
 const pool = require("../config/db");
+const { effectiveBranch } = require("../lib/context");
 
 // ── What needs attention right now ──────────────────────────────────────────
 //
@@ -14,7 +15,11 @@ const pool = require("../config/db");
 //
 // Counts plus a short preview, capped. The bell is a prompt to go and look, not
 // a report — the full lists already live on the dashboard and in Inventory.
-exports.summary = async (_req, res) => {
+// Counts for the branch being looked at (a cashier: their own; an owner or
+// manager: the branch picked, or every branch). They used to count the whole
+// chain for everyone, so a branch's bell rang for another branch's shelf.
+exports.summary = async (req, res) => {
+  const branchId = effectiveBranch(req);
   try {
     const cfg = await pool.query("SELECT near_expiry_months FROM settings WHERE id = 1");
     const months = Number(cfg.rows[0]?.near_expiry_months || 3);
@@ -25,12 +30,12 @@ exports.summary = async (_req, res) => {
       `SELECT p.name,
               COALESCE(SUM(b.quantity) FILTER (WHERE b.expiry_date IS NULL OR b.expiry_date >= CURRENT_DATE), 0)::int AS stock,
               p.reorder_level
-         FROM products p LEFT JOIN product_batches b ON b.product_id = p.id
+         FROM products p LEFT JOIN product_batches b ON b.product_id = p.id AND ($1::int IS NULL OR b.branch_id = $1)
         WHERE p.is_active = true
         GROUP BY p.id, p.name, p.reorder_level
        HAVING COALESCE(SUM(b.quantity) FILTER (WHERE b.expiry_date IS NULL OR b.expiry_date >= CURRENT_DATE), 0) <= p.reorder_level
         ORDER BY stock ASC
-        LIMIT 100`
+        LIMIT 100`, [branchId]
     );
 
     const exp = await pool.query(
@@ -38,9 +43,10 @@ exports.summary = async (_req, res) => {
          FROM product_batches b JOIN products p ON b.product_id = p.id
         WHERE b.quantity > 0 AND b.expiry_date IS NOT NULL
           AND b.expiry_date <= (CURRENT_DATE + ($1 || ' months')::interval)
+          AND ($2::int IS NULL OR b.branch_id = $2)
         ORDER BY b.expiry_date ASC
         LIMIT 100`,
-      [String(months)]
+      [String(months), branchId]
     );
 
     // Already expired is a separate, harder fact than "expiring soon": that
@@ -49,7 +55,8 @@ exports.summary = async (_req, res) => {
     const expired = await pool.query(
       `SELECT COUNT(*)::int AS n
          FROM product_batches
-        WHERE quantity > 0 AND expiry_date IS NOT NULL AND expiry_date < CURRENT_DATE`
+        WHERE quantity > 0 AND expiry_date IS NOT NULL AND expiry_date < CURRENT_DATE
+          AND ($1::int IS NULL OR branch_id = $1)`, [branchId]
     );
 
     // Nothing sellable at all, which is not the same as "low". Low means order
@@ -59,11 +66,11 @@ exports.summary = async (_req, res) => {
     const out = await pool.query(
       `SELECT COUNT(*)::int AS n FROM (
          SELECT p.id
-           FROM products p LEFT JOIN product_batches b ON b.product_id = p.id
+           FROM products p LEFT JOIN product_batches b ON b.product_id = p.id AND ($1::int IS NULL OR b.branch_id = $1)
           WHERE p.is_active = true
           GROUP BY p.id
          HAVING COALESCE(SUM(b.quantity) FILTER (WHERE b.expiry_date IS NULL OR b.expiry_date >= CURRENT_DATE), 0) <= 0
-       ) z`
+       ) z`, [branchId]
     );
 
     // Prescriptions with refills remaining, dispensed long enough ago to be due.

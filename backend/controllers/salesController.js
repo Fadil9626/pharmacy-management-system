@@ -1,7 +1,7 @@
 const { totalsFor } = require("../lib/saleMath");
 const pool = require("../config/db");
 const { pricingContext, effectivePrice } = require("../lib/pricing");
-const { effectiveBranch, moduleOn } = require("../lib/context");
+const { effectiveBranch, moduleOn, canSeeBranch } = require("../lib/context");
 const { userCan } = require("../lib/permissions");
 const { logAudit } = require("../lib/audit");
 const { openShiftId } = require("./financeController");
@@ -15,7 +15,7 @@ exports.salePDF = async (req, res) => {
   const id = Number(req.params.id);
   try {
     const sale = (await pool.query("SELECT * FROM sales WHERE id = $1", [id])).rows[0];
-    if (!sale) return res.status(404).json({ message: "Sale not found" });
+    if (!sale || !canSeeBranch(req, sale.branch_id)) return res.status(404).json({ message: "Sale not found" });
     const items = (await pool.query("SELECT name, qty, unit_price, line_total FROM sale_items WHERE sale_id = $1", [id])).rows;
     const payments = (await pool.query("SELECT method, amount FROM sale_payments WHERE sale_id = $1", [id])).rows;
     const promotions = (await pool.query("SELECT name, amount FROM sale_promotions WHERE sale_id = $1", [id])).rows;
@@ -191,7 +191,8 @@ exports.createSale = async (req, res) => {
     }
     const accountPortion = payments.filter((p) => p.method === "account").reduce((s, p) => s + p.amount, 0);
     const loyaltyAmount = payments.filter((p) => p.method === "loyalty").reduce((s, p) => s + p.amount, 0);
-    const pointsUsed = loyaltyAmount > 0 && redeemValue > 0 ? Math.round(loyaltyAmount / redeemValue) : 0;
+    // Rounded up: rounding to nearest let a small loyalty payment cost 0 points.
+    const pointsUsed = loyaltyAmount > 0 && redeemValue > 0 ? Math.ceil(loyaltyAmount / redeemValue - 1e-9) : 0;
     const effectiveMethod = payments.length > 1 ? "split" : payments[0].method;
 
     if (accountPortion > 0 && !(await userCan(req.user.role, "pos.account")))
@@ -269,6 +270,8 @@ exports.createSale = async (req, res) => {
     // sales build spend, visits and loyalty points.
     if (customer_id) {
       const points = Math.floor(total * loyaltyRate);
+      // Kept on the sale, so a refund takes back what this sale earned.
+      await client.query("UPDATE sales SET points_earned = $1 WHERE id = $2", [points, saleId]);
       const addBal = accountPortion;
       await client.query(
         `UPDATE customers SET
@@ -304,11 +307,36 @@ exports.createSale = async (req, res) => {
     });
   } catch (e) {
     await client.query("ROLLBACK");
+    // The same offline sale arriving twice at once: the second insert hits the
+    // unique client_uuid. Answer with the sale already recorded, as a replay would get.
+    if (e.code === "23505" && client_uuid) {
+      const prior = await pool.query("SELECT id, receipt_no, subtotal, discount, tax, total, payment_method, customer_name, created_at FROM sales WHERE client_uuid = $1", [client_uuid]);
+      if (prior.rows.length) return res.status(200).json({ ...prior.rows[0], items: [], change: null, amount_paid: null, duplicate: true });
+    }
     res.status(400).json({ message: e.message });
   } finally {
     client.release();
   }
 };
+
+/**
+ * What can still be refunded, by the way it was paid.
+ *
+ * A refund goes back the way the money came in, and no more than came in that
+ * way. Before this, the person refunding chose freely: a sale put on a
+ * customer's account could be refunded as cash from the till. Sales from before
+ * split payments were recorded have one tender: their payment method.
+ */
+async function refundable(db, sale) {
+  const paid = (await db.query("SELECT method, SUM(amount)::numeric AS amount FROM sale_payments WHERE sale_id = $1 GROUP BY method", [sale.id])).rows;
+  const by = {};
+  if (paid.length) for (const p of paid) by[p.method] = Number(p.amount);
+  else by[sale.payment_method === "split" ? "cash" : sale.payment_method] = Number(sale.total);
+  const back = (await db.query("SELECT refund_method, SUM(total)::numeric AS amount FROM sale_returns WHERE sale_id = $1 GROUP BY refund_method", [sale.id])).rows;
+  for (const r of back) if (by[r.refund_method] != null) by[r.refund_method] -= Number(r.amount);
+  for (const k of Object.keys(by)) by[k] = Math.max(0, Math.round(by[k] * 100) / 100);
+  return by;
+}
 
 exports.listSales = async (req, res) => {
   const branchId = branchOf(req);
@@ -339,7 +367,7 @@ exports.getSale = async (req, res) => {
        LEFT JOIN branches b ON s.branch_id = b.id WHERE s.id = $1`,
       [req.params.id]
     );
-    if (!sale.rows.length) return res.status(404).json({ message: "Sale not found" });
+    if (!sale.rows.length || !canSeeBranch(req, sale.rows[0].branch_id)) return res.status(404).json({ message: "Sale not found" });
     // include how much of each line has already been returned
     const items = await pool.query(
       `SELECT si.*, COALESCE(r.returned, 0)::int AS returned_qty
@@ -353,7 +381,7 @@ exports.getSale = async (req, res) => {
       "SELECT id, receipt_no, total, refund_method, created_at FROM sale_returns WHERE sale_id = $1 ORDER BY created_at",
       [req.params.id]
     );
-    res.json({ ...sale.rows[0], items: items.rows, returns: returns.rows });
+    res.json({ ...sale.rows[0], items: items.rows, returns: returns.rows, refundable_by_method: await refundable(pool, sale.rows[0]) });
   } catch (e) {
     res.status(500).json({ message: e.message });
   }
@@ -370,7 +398,7 @@ exports.createReturn = async (req, res) => {
   try {
     await client.query("BEGIN");
     const saleRes = await client.query("SELECT * FROM sales WHERE id = $1 FOR UPDATE", [saleId]);
-    if (!saleRes.rows.length) throw new Error("Sale not found");
+    if (!saleRes.rows.length || !canSeeBranch(req, saleRes.rows[0].branch_id)) throw new Error("Sale not found");
     const sale = saleRes.rows[0];
 
     if (await moduleOn("finance", client)) {
@@ -411,6 +439,14 @@ exports.createReturn = async (req, res) => {
     const propTax = gross > 0 ? Math.round((Number(sale.tax) * subtotal / gross) * 100) / 100 : 0;
     const total = Math.round((subtotal - propDiscount + propTax) * 100) / 100;
 
+    const left = await refundable(client, sale);
+    if (left[refund_method] == null) {
+      throw new Error(`This sale was paid by ${Object.keys(left).join(", ")} — refund it the same way`);
+    }
+    if (total > left[refund_method] + 0.01) {
+      throw new Error(`Only ${left[refund_method].toFixed(2)} paid by ${refund_method} is left to refund on this sale`);
+    }
+
     const shiftId = await openShiftId(req.user.id, client);
     const ins = await client.query(
       `INSERT INTO sale_returns (sale_id, branch_id, user_id, customer_id, shift_id, reason, refund_method, subtotal, tax, total, restocked)
@@ -434,13 +470,23 @@ exports.createReturn = async (req, res) => {
 
     if (sale.customer_id) {
       const reduceBal = refund_method === "account" ? total : 0;
+      const cfg = (await client.query("SELECT loyalty_points_per_unit, loyalty_redeem_value FROM settings WHERE id = 1")).rows[0] || {};
+      // Take back the points this sale earned, in proportion to what is refunded.
+      // Sales from before points were recorded: work them out at today's rate.
+      const earned = sale.points_earned != null
+        ? sale.points_earned
+        : Math.floor(Number(sale.total) * Number(cfg.loyalty_points_per_unit ?? 1));
+      const takeBack = Number(sale.total) > 0 ? Math.floor(earned * total / Number(sale.total)) : 0;
+      // Refunding a loyalty payment gives the points back.
+      const rv = Number(cfg.loyalty_redeem_value || 0);
+      const giveBack = refund_method === "loyalty" && rv > 0 ? Math.round(total / rv) : 0;
       await client.query(
         `UPDATE customers SET
            balance = GREATEST(0, balance - $1),
            total_spent = GREATEST(0, total_spent - $2),
-           loyalty_points = GREATEST(0, loyalty_points - $3)
+           loyalty_points = GREATEST(0, loyalty_points - $3 + $5)
          WHERE id = $4`,
-        [reduceBal, total, Math.floor(total), sale.customer_id]
+        [reduceBal, total, takeBack, sale.customer_id, giveBack]
       );
     }
 
@@ -503,7 +549,7 @@ exports.listParked = async (req, res) => {
 exports.getParked = async (req, res) => {
   try {
     const { rows } = await pool.query("SELECT * FROM parked_sales WHERE id = $1", [req.params.id]);
-    if (!rows.length) return res.status(404).json({ message: "Held sale not found" });
+    if (!rows.length || !canSeeBranch(req, rows[0].branch_id)) return res.status(404).json({ message: "Held sale not found" });
     res.json(rows[0]);
   } catch (e) {
     res.status(500).json({ message: e.message });
@@ -512,6 +558,8 @@ exports.getParked = async (req, res) => {
 
 exports.deleteParked = async (req, res) => {
   try {
+    const { rows } = await pool.query("SELECT branch_id FROM parked_sales WHERE id = $1", [req.params.id]);
+    if (!rows.length || !canSeeBranch(req, rows[0].branch_id)) return res.status(404).json({ message: "Held sale not found" });
     await pool.query("DELETE FROM parked_sales WHERE id = $1", [req.params.id]);
     res.json({ success: true });
   } catch (e) {

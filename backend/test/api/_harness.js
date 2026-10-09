@@ -55,10 +55,35 @@ async function signIn(u) {
   return r.body.token;
 }
 
+/** A product with one batch: `qty` units at `price`, expiring in a year. */
+async function product({ branchId = 1, qty = 100, price = 10, cost = 5, controlled = false } = {}) {
+  const { rows } = await db().query(
+    "INSERT INTO products (name, unit, is_controlled, base_price) VALUES ($1,'tab',$2,0) RETURNING id",
+    [`Test product ${made.length}-${Date.now() % 100000}-${run}`, controlled]);
+  const id = rows[0].id;
+  const b = await db().query(
+    `INSERT INTO product_batches (product_id, branch_id, batch_no, expiry_date, quantity, cost_price, selling_price)
+     VALUES ($1,$2,'T1',CURRENT_DATE + 365,$3,$4,$5) RETURNING id`, [id, branchId, qty, cost, price]);
+  return { id, batch_id: b.rows[0].id };
+}
+
+async function customer(extra = {}) {
+  const { rows } = await db().query(
+    "INSERT INTO customers (name, phone, email, credit_limit) VALUES ($1,$2,$3,$4) RETURNING *",
+    [`Test customer ${run}`, extra.phone ?? "+23270000000", extra.email ?? `cust-${run}@test.local`, extra.credit_limit ?? 1000]);
+  return rows[0];
+}
+
+/** Open the signed-in person's till (Finance requires one before selling). */
+async function openTill(token) {
+  await api("POST", "/api/finance/shift/open", { token, body: { opening_float: 0 } });
+}
+
 async function cleanup() {
+  if (made.length) await db().query("UPDATE shifts SET status = 'closed', closed_at = NOW() WHERE status = 'open' AND user_id = ANY($1)", [made]);
   if (made.length) await db().query("UPDATE users SET is_active = false, email = email || '.done' WHERE id = ANY($1) AND email NOT LIKE '%.done'", [made]);
   if (pool) await pool.end();
   pool = null;
 }
 
-module.exports = { BASE, PASSWORD, db, available, staff, api, signIn, cleanup };
+module.exports = { BASE, PASSWORD, db, available, staff, api, signIn, product, customer, openTill, cleanup };

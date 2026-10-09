@@ -48,4 +48,15 @@ async function moduleOn(key, db = pool) {
   return rows[0]?.is_enabled === true;
 }
 
-module.exports = { effectiveBranch, moduleOn, CROSS_BRANCH_ROLES };
+/**
+ * May this request see a record that belongs to `branchId`?
+ *
+ * Lists were already filtered through effectiveBranch, but a record opened by
+ * its number (a sale, a held cart, a count, a till report) was served whatever
+ * branch it belonged to. Owners and managers may open any branch's records;
+ * everyone else only their own branch's.
+ */
+const canSeeBranch = (req, branchId) =>
+  !!req.user && (CROSS_BRANCH_ROLES.includes(req.user.role) || branchId == null || Number(branchId) === Number(req.user.branch_id));
+
+module.exports = { effectiveBranch, moduleOn, canSeeBranch, CROSS_BRANCH_ROLES };

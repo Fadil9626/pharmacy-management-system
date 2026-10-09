@@ -1,6 +1,7 @@
 const pool = require("../config/db");
-
-const branchOf = (req) => Number(req.query.branch_id) || Number(req.body?.branch_id) || req.user.branch_id || null;
+const { effectiveBranch, canSeeBranch } = require("../lib/context");
+const { userCan } = require("../lib/permissions");
+const { logAudit } = require("../lib/audit");
 
 // Find the caller's current open shift id (used by POS to tag sales).
 async function openShiftId(userId, db = pool) {
@@ -83,6 +84,8 @@ exports.open = async (req, res) => {
     );
     res.status(201).json(rows[0]);
   } catch (e) {
+    // Two "Open till" clicks at once: the database allows one open till per person.
+    if (e.code === "23505") return res.status(400).json({ message: "You already have an open till" });
     res.status(500).json({ message: e.message });
   }
 };
@@ -113,6 +116,12 @@ exports.cashMovement = async (req, res) => {
   const amt = Number(amount);
   if (!["drop", "payout", "in"].includes(type)) return res.status(400).json({ message: "Invalid movement type" });
   if (!amt || amt <= 0) return res.status(400).json({ message: "A positive amount is required" });
+  // A pay-out is cash leaving the business, and it lowers what the till is
+  // expected to hold — so without a permission it could hide a shortage.
+  // Drops (to the safe) and top-ups stay with whoever runs the till.
+  if (type === "payout" && !(await userCan(req.user.role, "finance.payout"))) {
+    return res.status(403).json({ message: "You don't have permission to pay cash out of the till" });
+  }
   try {
     const id = await openShiftId(req.user.id);
     if (!id) return res.status(400).json({ message: "Open a till first" });
@@ -120,6 +129,7 @@ exports.cashMovement = async (req, res) => {
       "INSERT INTO cash_movements (shift_id, type, amount, note, user_id) VALUES ($1,$2,$3,$4,$5)",
       [id, type, amt, note || null, req.user.id]
     );
+    if (type === "payout") logAudit(req, "till_payout", "shift", id, { amount: amt, note: note || null });
     res.status(201).json({ success: true });
   } catch (e) {
     res.status(500).json({ message: e.message });
@@ -127,10 +137,12 @@ exports.cashMovement = async (req, res) => {
 };
 
 exports.shifts = async (req, res) => {
+  const branchId = effectiveBranch(req);
   try {
     const { rows } = await pool.query(
       `SELECT s.*, u.full_name AS cashier FROM shifts s LEFT JOIN users u ON s.user_id = u.id
-       WHERE status='closed' ORDER BY closed_at DESC LIMIT 60`
+       WHERE status='closed' AND ($1::int IS NULL OR s.branch_id = $1)
+       ORDER BY closed_at DESC LIMIT 60`, [branchId]
     );
     res.json(rows);
   } catch (e) {
@@ -144,8 +156,12 @@ exports.shiftReport = async (req, res) => {
       `SELECT s.*, u.full_name AS cashier FROM shifts s LEFT JOIN users u ON s.user_id = u.id WHERE s.id = $1`,
       [req.params.id]
     )).rows[0];
-    if (!shift) return res.status(404).json({ message: "Shift not found" });
-    res.json({ shift, ...(await tally(req.params.id)) });
+    // Your own till, or — with "Close tills & shift history" — a till at a branch you can see.
+    const mine = shift && shift.user_id === req.user.id;
+    if (!shift || (!mine && !(canSeeBranch(req, shift.branch_id) && (await userCan(req.user.role, "finance.reconcile"))))) {
+      return res.status(404).json({ message: "Shift not found" });
+    }
+    res.json({ shift, ...(await tally(shift.id)) });
   } catch (e) {
     res.status(500).json({ message: e.message });
   }
@@ -170,10 +186,12 @@ exports.createExpense = async (req, res) => {
 };
 
 exports.listExpenses = async (req, res) => {
+  const branchId = effectiveBranch(req);
   try {
     const { rows } = await pool.query(
       `SELECT e.*, u.full_name AS by_name FROM expenses e LEFT JOIN users u ON e.user_id = u.id
-       ORDER BY e.created_at DESC LIMIT 100`
+       WHERE ($1::int IS NULL OR e.branch_id = $1)
+       ORDER BY e.created_at DESC LIMIT 100`, [branchId]
     );
     const total = rows.reduce((s, r) => s + Number(r.amount), 0);
     res.json({ expenses: rows, total });

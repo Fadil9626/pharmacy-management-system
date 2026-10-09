@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { useAuth } from "../context/AuthContext.jsx";
 import { api } from "../lib/api.js";
 import { money, num } from "../lib/money.js";
 import { downloadCSV } from "../lib/csv.js";
@@ -109,6 +110,7 @@ function Modal({ title, onClose, children }) {
 }
 
 function CustomerForm({ customer, onClose, onSaved }) {
+  const { can } = useAuth();
   const editing = !!customer;
   const [f, setF] = useState({
     name: customer?.name || "", phone: customer?.phone || "", email: customer?.email || "",
@@ -143,7 +145,8 @@ function CustomerForm({ customer, onClose, onSaved }) {
         <div><label className="label">Address</label><input className="input" value={f.address} onChange={set("address")} /></div>
         <div>
           <label className="label">Credit limit <span className="font-normal text-sage-400">(0 = no account credit)</span></label>
-          <input type="number" min="0" step="0.01" className="input" value={f.credit_limit} onChange={set("credit_limit")} />
+          <input type="number" min="0" step="0.01" className="input" value={f.credit_limit} onChange={set("credit_limit")}
+            disabled={!can("customers.credit")} title={can("customers.credit") ? undefined : "Setting a credit limit needs the “Set credit limits” permission"} />
         </div>
         <div>
           <label className="label">Allergies <span className="font-normal text-sage-400">(comma-separated — flags risky items at the till)</span></label>

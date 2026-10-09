@@ -78,7 +78,9 @@ exports.create = async (req, res) => {
   }
 };
 
-exports.list = async (_req, res) => {
+exports.list = async (req, res) => {
+  // Transfers in or out of the branch being looked at.
+  const branchId = effectiveBranch(req);
   try {
     const { rows } = await pool.query(
       `SELECT t.id, t.reference, t.note, t.created_at, u.full_name AS moved_by,
@@ -89,7 +91,8 @@ exports.list = async (_req, res) => {
        LEFT JOIN users u ON t.user_id = u.id
        LEFT JOIN branches fb ON t.from_branch_id = fb.id
        LEFT JOIN branches tb ON t.to_branch_id = tb.id
-       ORDER BY t.created_at DESC LIMIT 100`
+       WHERE ($1::int IS NULL OR t.from_branch_id = $1 OR t.to_branch_id = $1)
+       ORDER BY t.created_at DESC LIMIT 100`, [branchId]
     );
     res.json(rows);
   } catch (e) {

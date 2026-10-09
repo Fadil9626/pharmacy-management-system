@@ -3,6 +3,8 @@ import { api } from "../lib/api.js";
 import { useAuth } from "../context/AuthContext.jsx";
 import ReceiptModal from "../components/Receipt.jsx";
 import { money } from "../lib/money.js";
+
+const REFUND_LABEL = { cash: "Cash", card: "Card", mobile: "Mobile money", account: "Customer account", loyalty: "Loyalty points" };
 import {
   Receipt, Search, Loader2, Eye, Banknote, CreditCard, Smartphone, Undo2, X, CheckCircle2,
 } from "lucide-react";
@@ -142,7 +144,9 @@ function ReturnModal({ saleId, onClose, onDone }) {
   useEffect(() => {
     api(`/api/sales/${saleId}`).then((s) => {
       setSale(s);
-      setMethod(s.payment_method === "account" ? "account" : "cash");
+      // Refund the way it was paid: the first tender with something left to refund.
+      const left = Object.entries(s.refundable_by_method || {}).filter(([, v]) => v > 0);
+      setMethod(left.length ? left[0][0] : (s.payment_method === "account" ? "account" : "cash"));
     }).catch((e) => setErr(e.message));
   }, [saleId]);
 
@@ -199,10 +203,13 @@ function ReturnModal({ saleId, onClose, onDone }) {
           <div>
             <label className="label">Refund via</label>
             <select className="input" value={method} onChange={(e) => setMethod(e.target.value)}>
-              <option value="cash">Cash</option><option value="card">Card</option>
-              <option value="mobile">Mobile</option>
-              {sale.customer_id && <option value="account">Customer account</option>}
+              {Object.entries(sale.refundable_by_method || { cash: Number(sale.total) }).map(([m, left]) => (
+                <option key={m} value={m} disabled={left <= 0}>
+                  {REFUND_LABEL[m] || m} — {money(left)} left
+                </option>
+              ))}
             </select>
+            <p className="mt-1 text-xs text-sage-400">A refund goes back the way the sale was paid.</p>
           </div>
         </div>
 

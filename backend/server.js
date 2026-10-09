@@ -99,15 +99,8 @@ if (!process.env.JWT_SECRET) {
 const dbReady = (async () => {
   try {
     await pool.query("SELECT NOW()");
-    const dir = path.join(__dirname, "migrations");
-    for (const f of fs.readdirSync(dir).filter((x) => x.endsWith(".sql")).sort()) {
-      try {
-        await pool.query(fs.readFileSync(path.join(dir, f), "utf8"));
-        console.log(`✅ migration ${f}`);
-      } catch (e) {
-        console.error(`⚠️  migration ${f}: ${e.message}`);
-      }
-    }
+    // Each database update once, recorded; a failure stops start-up (below).
+    await require("./lib/migrate").migrate(pool);
     const { rows } = await pool.query("SELECT COUNT(*)::int n FROM users");
     if (rows[0].n === 0) {
       // First-boot owner account.
@@ -151,6 +144,8 @@ const dbReady = (async () => {
     const chained = await require("./lib/audit").backfillAuditChain();
     if (chained) console.log(`✅ Audit chain established for ${chained} existing entries`);
     await backfillPermission("pos.refund", ["manager", "pharmacist"]);
+    await backfillPermission("finance.payout", ["manager"]);
+    await backfillPermission("customers.credit", ["manager"]);
     console.log("✅ Remedy database ready");
   } catch (e) {
     console.error("❌ DB init failed:", e.message);
@@ -313,7 +308,7 @@ app.get("/api/returns", protect, requireModule("pos"), sales.listReturns);
 app.post("/api/pos/park", protect, requireModule("pos"), requirePermission("pos.sell"), sales.park);
 app.get("/api/pos/parked", protect, requireModule("pos"), sales.listParked);
 app.get("/api/pos/parked/:id", protect, requireModule("pos"), sales.getParked);
-app.delete("/api/pos/parked/:id", protect, requireModule("pos"), sales.deleteParked);
+app.delete("/api/pos/parked/:id", protect, requireModule("pos"), requirePermission("pos.sell"), sales.deleteParked);
 
 // Purchasing
 app.post("/api/suppliers", protect, authorize("owner", "manager"), purchasing.createSupplier);

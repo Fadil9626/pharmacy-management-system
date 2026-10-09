@@ -1,6 +1,7 @@
 const pool = require("../config/db");
 const { notify } = require("../lib/notify");
 const pdf = require("../lib/pdf");
+const { userCan } = require("../lib/permissions");
 
 // Email/SMS a statement summary to a customer on demand.
 exports.notifyStatement = async (req, res) => {
@@ -10,7 +11,9 @@ exports.notifyStatement = async (req, res) => {
   try {
     const c = (await pool.query("SELECT name, email, phone, balance FROM customers WHERE id = $1", [id])).rows[0];
     if (!c) return res.status(404).json({ message: "Customer not found" });
-    const to = req.body.to || (channel === "email" ? c.email : c.phone);
+    // Only to the customer's own email or phone. It used to accept any address
+    // in the request, which sent a customer's balance to whoever was named.
+    const to = channel === "email" ? c.email : c.phone;
     if (!to) return res.status(400).json({ message: `No ${channel} on file for this customer` });
 
     const since = "90 days";
@@ -84,6 +87,8 @@ const cleanAllergies = (a) => (Array.isArray(a) ? a.map((x) => String(x).trim())
 exports.create = async (req, res) => {
   const { name, phone, email, address, credit_limit, notes, allergies, conditions } = req.body || {};
   if (!name || !name.trim()) return res.status(400).json({ message: "Customer name is required" });
+  if (Number(credit_limit) > 0 && !(await userCan(req.user.role, "customers.credit")))
+    return res.status(403).json({ message: "You don't have permission to set a credit limit" });
   try {
     const { rows } = await pool.query(
       `INSERT INTO customers (name, phone, email, address, credit_limit, notes, allergies, conditions)
@@ -98,24 +103,37 @@ exports.create = async (req, res) => {
   }
 };
 
+// Only the fields the request sends are changed. Phone, email, address and
+// notes used to be set to whatever was sent, so an edit that left one out
+// (or a screen that edits only some fields) erased it.
 exports.update = async (req, res) => {
   const id = Number(req.params.id);
-  const { name, phone, email, address, credit_limit, notes, is_active, allergies, conditions } = req.body || {};
+  const b = req.body || {};
+  const sets = [];
+  const vals = [];
+  const put = (col, v, cast = "") => { vals.push(v); sets.push(`${col} = $${vals.length}${cast}`); };
+  if (b.name !== undefined) {
+    if (!String(b.name || "").trim()) return res.status(400).json({ message: "Customer name is required" });
+    put("name", String(b.name).trim());
+  }
+  for (const k of ["phone", "email", "address", "notes"]) if (b[k] !== undefined) put(k, b[k] === "" ? null : b[k]);
+  if (b.credit_limit !== undefined && b.credit_limit !== "") {
+    const cur = (await pool.query("SELECT credit_limit FROM customers WHERE id = $1", [id])).rows[0];
+    if (cur && Number(cur.credit_limit) !== Number(b.credit_limit) && !(await userCan(req.user.role, "customers.credit")))
+      return res.status(403).json({ message: "You don't have permission to change a credit limit" });
+    put("credit_limit", Number(b.credit_limit));
+  }
+  if (typeof b.is_active === "boolean") put("is_active", b.is_active);
+  if (b.allergies !== undefined) put("allergies", JSON.stringify(cleanAllergies(b.allergies)), "::jsonb");
+  if (b.conditions !== undefined) put("conditions", JSON.stringify(cleanAllergies(b.conditions)), "::jsonb");
   try {
-    const { rows } = await pool.query(
-      `UPDATE customers SET
-         name = COALESCE($1, name), phone = $2, email = $3, address = $4,
-         credit_limit = COALESCE($5, credit_limit), notes = $6,
-         is_active = COALESCE($7, is_active),
-         allergies = COALESCE($9::jsonb, allergies),
-         conditions = COALESCE($10::jsonb, conditions)
-       WHERE id = $8 RETURNING *`,
-      [name?.trim() || null, phone || null, email || null, address || null,
-       credit_limit != null && credit_limit !== "" ? Number(credit_limit) : null,
-       notes || null, typeof is_active === "boolean" ? is_active : null, id,
-       allergies !== undefined ? JSON.stringify(cleanAllergies(allergies)) : null,
-       conditions !== undefined ? JSON.stringify(cleanAllergies(conditions)) : null]
-    );
+    if (!sets.length) {
+      const cur = await pool.query("SELECT * FROM customers WHERE id = $1", [id]);
+      if (!cur.rows.length) return res.status(404).json({ message: "Customer not found" });
+      return res.json(cur.rows[0]);
+    }
+    vals.push(id);
+    const { rows } = await pool.query(`UPDATE customers SET ${sets.join(", ")} WHERE id = $${vals.length} RETURNING *`, vals);
     if (!rows.length) return res.status(404).json({ message: "Customer not found" });
     res.json(rows[0]);
   } catch (e) {
@@ -123,9 +141,6 @@ exports.update = async (req, res) => {
   }
 };
 
-// Account statement: a running ledger of on-account charges and repayments over
-// a date range, reconstructed from transactions (opening balance = net activity
-// before `from`). Used for the printable/exportable customer statement.
 async function buildStatement(id, fromQ, toQ) {
   const from = fromQ ? `${fromQ} 00:00:00` : "1970-01-01";
   const to = toQ ? `${toQ} 23:59:59` : "2999-12-31";
@@ -136,10 +151,17 @@ async function buildStatement(id, fromQ, toQ) {
      FROM sales s JOIN sale_payments sp ON sp.sale_id = s.id AND sp.method = 'account'
      WHERE s.customer_id = $1 GROUP BY s.id, s.receipt_no, s.created_at`, [id]);
   const pays = await pool.query(
-    `SELECT cp.id, cp.created_at, cp.amount, cp.method, cp.note FROM customer_payments cp WHERE cp.customer_id = $1`, [id]);
+    `SELECT cp.id, cp.created_at, cp.amount, cp.method, cp.note, u.full_name AS taken_by
+       FROM customer_payments cp LEFT JOIN users u ON cp.user_id = u.id WHERE cp.customer_id = $1`, [id]);
+  // Refunds credited to the account lower what is owed. They were left out, so
+  // the statement's closing balance disagreed with the customer's real balance.
+  const credits = await pool.query(
+    `SELECT r.created_at, r.total AS amount, r.receipt_no FROM sale_returns r
+      WHERE r.customer_id = $1 AND r.refund_method = 'account'`, [id]);
   const events = [
     ...charges.rows.map((r) => ({ at: new Date(r.created_at), type: "charge", ref: r.receipt_no, amount: Number(r.amount), label: "On-account sale" })),
-    ...pays.rows.map((r) => ({ at: new Date(r.created_at), type: "payment", ref: null, amount: Number(r.amount), label: `Payment (${r.method})${r.note ? " — " + r.note : ""}` })),
+    ...pays.rows.map((r) => ({ at: new Date(r.created_at), type: "payment", ref: null, amount: Number(r.amount), label: `Payment (${r.method})${r.note ? " — " + r.note : ""}`, taken_by: r.taken_by })),
+    ...credits.rows.map((r) => ({ at: new Date(r.created_at), type: "payment", ref: r.receipt_no, amount: Number(r.amount), label: "Refund to account" })),
   ].sort((a, b) => a.at - b.at);
   const fromTs = new Date(from), toTs = new Date(to);
   let opening = 0;
@@ -149,7 +171,7 @@ async function buildStatement(id, fromQ, toQ) {
   for (const e of events) {
     if (e.at < fromTs || e.at > toTs) continue;
     running += e.type === "charge" ? e.amount : -e.amount;
-    lines.push({ date: e.at, type: e.type, ref: e.ref, label: e.label,
+    lines.push({ date: e.at, type: e.type, ref: e.ref, label: e.label, taken_by: e.taken_by || null,
       charge: e.type === "charge" ? e.amount : 0, payment: e.type === "payment" ? e.amount : 0,
       balance: Math.round(running * 100) / 100 });
   }
@@ -164,67 +186,15 @@ async function buildStatement(id, fromQ, toQ) {
 }
 
 exports.statement = async (req, res) => {
-  const id = Number(req.params.id);
-  const from = req.query.from ? `${req.query.from} 00:00:00` : "1970-01-01";
-  const to = req.query.to ? `${req.query.to} 23:59:59` : "2999-12-31";
   try {
-    const c = await pool.query("SELECT id, name, phone, email, address, balance, credit_limit FROM customers WHERE id = $1", [id]);
-    if (!c.rows.length) return res.status(404).json({ message: "Customer not found" });
-
-    // On-account charges = the 'account' tender portion of each sale.
-    const charges = await pool.query(
-      `SELECT s.id, s.receipt_no, s.created_at, SUM(sp.amount)::numeric AS amount
-       FROM sales s JOIN sale_payments sp ON sp.sale_id = s.id AND sp.method = 'account'
-       WHERE s.customer_id = $1
-       GROUP BY s.id, s.receipt_no, s.created_at`,
-      [id]
-    );
-    const pays = await pool.query(
-      `SELECT cp.id, cp.created_at, cp.amount, cp.method, cp.note, u.full_name AS taken_by
-       FROM customer_payments cp LEFT JOIN users u ON cp.user_id = u.id
-       WHERE cp.customer_id = $1`,
-      [id]
-    );
-
-    const events = [
-      ...charges.rows.map((r) => ({ at: new Date(r.created_at), type: "charge", ref: r.receipt_no, amount: Number(r.amount), label: "On-account sale" })),
-      ...pays.rows.map((r) => ({ at: new Date(r.created_at), type: "payment", ref: null, amount: Number(r.amount), label: `Payment (${r.method})${r.note ? " — " + r.note : ""}`, taken_by: r.taken_by })),
-    ].sort((a, b) => a.at - b.at);
-
-    const fromTs = new Date(from), toTs = new Date(to);
-    let opening = 0;
-    for (const e of events) if (e.at < fromTs) opening += e.type === "charge" ? e.amount : -e.amount;
-
-    let running = opening;
-    const lines = [];
-    for (const e of events) {
-      if (e.at < fromTs || e.at > toTs) continue;
-      running += e.type === "charge" ? e.amount : -e.amount;
-      lines.push({
-        date: e.at, type: e.type, ref: e.ref, label: e.label, taken_by: e.taken_by || null,
-        charge: e.type === "charge" ? e.amount : 0,
-        payment: e.type === "payment" ? e.amount : 0,
-        balance: Math.round(running * 100) / 100,
-      });
-    }
-    const totalCharges = lines.reduce((s, l) => s + l.charge, 0);
-    const totalPayments = lines.reduce((s, l) => s + l.payment, 0);
-    res.json({
-      customer: c.rows[0],
-      from: req.query.from || null, to: req.query.to || null,
-      opening_balance: Math.round(opening * 100) / 100,
-      closing_balance: Math.round(running * 100) / 100,
-      total_charges: Math.round(totalCharges * 100) / 100,
-      total_payments: Math.round(totalPayments * 100) / 100,
-      current_balance: Number(c.rows[0].balance),
-      lines,
-    });
+    const data = await buildStatement(Number(req.params.id), req.query.from, req.query.to);
+    if (!data) return res.status(404).json({ message: "Customer not found" });
+    res.json(data);
   } catch (e) {
     res.status(500).json({ message: e.message });
   }
 };
 
-// Downloadable PDF statement.
 exports.statementPDF = async (req, res) => {
   try {
     const data = await buildStatement(Number(req.params.id), req.query.from, req.query.to);

@@ -1,6 +1,7 @@
 const pool = require("../config/db");
 const { effectiveBranch } = require("../lib/context");
 const { logAudit } = require("../lib/audit");
+const { expiryProblem } = require("../lib/receiving");
 
 const branchOf = effectiveBranch;
 
@@ -77,6 +78,10 @@ exports.createPO = async (req, res) => {
   if (!branchId) return res.status(400).json({ message: "No branch on this account" });
   if (!Array.isArray(items) || items.length === 0)
     return res.status(400).json({ message: "Add at least one product line" });
+  // An order starts as a draft or as ordered. It used to accept any status, and
+  // one created as "received" could be paid without any stock ever arriving.
+  if (!["draft", "ordered"].includes(status))
+    return res.status(400).json({ message: "A new order is a draft or ordered" });
 
   const client = await pool.connect();
   try {
@@ -178,17 +183,27 @@ exports.receivePO = async (req, res) => {
     if (po.status === "received") throw new Error("This order is already received");
     if (po.status === "cancelled") throw new Error("This order was cancelled");
 
-    const items = await client.query("SELECT * FROM purchase_order_items WHERE po_id = $1", [poId]);
+    // Deliveries can come in parts. Each receipt adds to what each line has
+    // received so far; the order is "partial" until every line is complete.
+    // What the supplier is owed is the cost of what arrived (received_value),
+    // not the cost of what was ordered.
+    const items = await client.query("SELECT i.*, p.name AS product_name FROM purchase_order_items i JOIN products p ON p.id = i.product_id WHERE i.po_id = $1 ORDER BY i.id FOR UPDATE OF i", [poId]);
     let received = 0;
+    let value = 0;
 
     for (const it of items.rows) {
       const o = byId.get(it.id) || {};
-      const qty = o.qty_received != null ? Number(o.qty_received) : it.qty_ordered;
+      const remaining = it.qty_ordered - (it.qty_received || 0);
+      const qty = o.qty_received != null && o.qty_received !== "" ? Number(o.qty_received) : remaining;
       if (!qty || qty <= 0) continue;
+      if (!Number.isInteger(qty)) throw new Error(`Receive whole units of ${it.product_name}`);
+      if (qty > remaining) throw new Error(`Only ${remaining} of ${it.product_name} are still to come on this order`);
       const cost = o.cost_price != null ? Number(o.cost_price) : Number(it.cost_price);
       const sell = o.selling_price != null ? Number(o.selling_price) : Number(it.selling_price);
       const batchNo = o.batch_no ?? it.batch_no;
       const expiry = o.expiry_date ?? it.expiry_date;
+      const bad = await expiryProblem(expiry, it.product_name);
+      if (bad) throw new Error(bad);
 
       await client.query(
         `INSERT INTO product_batches
@@ -196,18 +211,23 @@ exports.receivePO = async (req, res) => {
          VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
         [it.product_id, po.branch_id, po.supplier_id, batchNo || null, expiry || null, qty, cost, sell]
       );
-      await client.query("UPDATE purchase_order_items SET qty_received = $1 WHERE id = $2", [qty, it.id]);
+      await client.query("UPDATE purchase_order_items SET qty_received = COALESCE(qty_received, 0) + $1 WHERE id = $2", [qty, it.id]);
       received += qty;
+      value += qty * cost;
     }
 
     if (received === 0) throw new Error("Nothing to receive");
 
+    const open = await client.query(
+      "SELECT COUNT(*)::int AS n FROM purchase_order_items WHERE po_id = $1 AND COALESCE(qty_received, 0) < qty_ordered", [poId]);
+    const status = open.rows[0].n > 0 ? "partial" : "received";
     await client.query(
-      "UPDATE purchase_orders SET status = 'received', received_at = NOW() WHERE id = $1",
-      [poId]
+      "UPDATE purchase_orders SET status = $2, received_at = NOW(), received_value = received_value + $3 WHERE id = $1",
+      [poId, status, Math.round(value * 100) / 100]
     );
     await client.query("COMMIT");
-    res.json({ id: poId, status: "received", units_received: received });
+    logAudit(req, "po_receive", "purchase_order", poId, { units: received, value: Math.round(value * 100) / 100, status });
+    res.json({ id: poId, status, units_received: received });
   } catch (e) {
     await client.query("ROLLBACK");
     res.status(400).json({ message: e.message });
@@ -222,12 +242,12 @@ exports.listPayables = async (req, res) => {
   const branchId = branchOf(req);
   try {
     const { rows } = await pool.query(
-      `SELECT po.id, po.po_number, po.total_cost, po.amount_paid,
-              (po.total_cost - po.amount_paid)::float AS outstanding,
+      `SELECT po.id, po.po_number, po.received_value AS total_cost, po.total_cost AS ordered_cost, po.status, po.amount_paid,
+              (po.received_value - po.amount_paid)::float AS outstanding,
               po.received_at, s.id AS supplier_id, s.name AS supplier_name
        FROM purchase_orders po
        LEFT JOIN suppliers s ON po.supplier_id = s.id
-       WHERE po.status = 'received' AND (po.total_cost - po.amount_paid) > 0.005
+       WHERE po.status IN ('partial', 'received') AND (po.received_value - po.amount_paid) > 0.005
          AND ($1::int IS NULL OR po.branch_id = $1)
        ORDER BY po.received_at`,
       [branchId]
@@ -273,8 +293,8 @@ exports.payPO = async (req, res) => {
     const po = await client.query("SELECT * FROM purchase_orders WHERE id = $1 FOR UPDATE", [poId]);
     if (!po.rows.length) throw new Error("Order not found");
     const p = po.rows[0];
-    if (p.status !== "received") throw new Error("Only received orders can be paid");
-    const outstanding = Number(p.total_cost) - Number(p.amount_paid);
+    if (!["partial", "received"].includes(p.status)) throw new Error("Only orders that have arrived can be paid");
+    const outstanding = Number(p.received_value) - Number(p.amount_paid);
     if (amt > outstanding + 0.01) throw new Error(`Only ${outstanding.toFixed(2)} is outstanding on this order`);
     await client.query("UPDATE purchase_orders SET amount_paid = amount_paid + $1 WHERE id = $2", [amt, poId]);
     await client.query(
@@ -294,9 +314,11 @@ exports.payPO = async (req, res) => {
 
 exports.cancelPO = async (req, res) => {
   try {
+    // A part-delivered order is closed with what arrived (it stays payable for
+    // that); one where nothing arrived is cancelled.
     const { rows } = await pool.query(
-      `UPDATE purchase_orders SET status = 'cancelled'
-       WHERE id = $1 AND status <> 'received' RETURNING id, status`,
+      `UPDATE purchase_orders SET status = CASE WHEN status = 'partial' THEN 'received' ELSE 'cancelled' END
+       WHERE id = $1 AND status NOT IN ('received', 'cancelled') RETURNING id, status`,
       [req.params.id]
     );
     if (!rows.length) return res.status(400).json({ message: "Cannot cancel this order" });

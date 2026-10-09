@@ -1,6 +1,6 @@
 const pool = require("../config/db");
 const { pricingContext, effectivePrice } = require("../lib/pricing");
-const { effectiveBranch } = require("../lib/context");
+const { effectiveBranch, canSeeBranch } = require("../lib/context");
 const { logAudit } = require("../lib/audit");
 const { mint } = require("../lib/barcode");
 
@@ -295,7 +295,7 @@ exports.adjustStock = async (req, res) => {
   const { batch_id, qty_change, reason, note } = req.body || {};
   const change = Number(qty_change);
   const REASONS = ["expired", "damaged", "lost", "recall", "correction"];
-  if (!batch_id || !change || Number.isNaN(change))
+  if (!batch_id || !change || Number.isNaN(change) || !Number.isInteger(change))
     return res.status(400).json({ message: "Batch and a non-zero quantity change are required" });
   if (!REASONS.includes(reason)) return res.status(400).json({ message: "Invalid reason" });
 
@@ -303,7 +303,8 @@ exports.adjustStock = async (req, res) => {
   try {
     await client.query("BEGIN");
     const b = await client.query("SELECT * FROM product_batches WHERE id = $1 FOR UPDATE", [batch_id]);
-    if (!b.rows.length) throw new Error("Batch not found");
+    // Only a batch at a branch you can see — it used to adjust any branch's batch by its number.
+    if (!b.rows.length || !canSeeBranch(req, b.rows[0].branch_id)) throw new Error("Batch not found");
     const batch = b.rows[0];
     const newQty = batch.quantity + change;
     if (newQty < 0) throw new Error(`Only ${batch.quantity} in this batch — can't remove ${Math.abs(change)}`);
@@ -359,7 +360,10 @@ exports.receiveStock = async (req, res) => {
     return res.status(400).json({ message: "Product and a positive quantity are required" });
   }
   if (!branchId) return res.status(400).json({ message: "No branch on this account" });
+  if (!Number.isInteger(Number(quantity))) return res.status(400).json({ message: "Receive whole units or packs" });
   try {
+    const bad = await require("../lib/receiving").expiryProblem(expiry_date);
+    if (bad) return res.status(400).json({ message: bad });
     // Receiving by pack: the figures are per pack, so convert to base units —
     // quantity × pack_size, and the per-pack cost spread across its units.
     let qtyUnits = Number(quantity);
