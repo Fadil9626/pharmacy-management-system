@@ -258,6 +258,8 @@ app.post("/api/branches", protect, requireModule("branches"), requirePermission(
 app.patch("/api/branches/:id", protect, requireModule("branches"), requirePermission("branches.manage"), branches.update);
 app.get("/api/transfers", protect, requireModule("branches"), transfers.list);
 app.post("/api/transfers", protect, requireModule("branches"), requirePermission("inventory.adjust"), transfers.create);
+app.post("/api/transfers/:id/receive", protect, requireModule("branches"), requirePermission("inventory.receive"), transfers.receive);
+app.post("/api/transfers/:id/cancel", protect, requireModule("branches"), requirePermission("inventory.adjust"), transfers.cancel);
 
 // Promotions / discounts (managed by owner/manager; previewed at the till)
 app.get("/api/promotions", protect, authorize("owner", "manager"), promotions.list);

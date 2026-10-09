@@ -7,6 +7,7 @@ const { logAudit } = require("../lib/audit");
 const { openShiftId } = require("./financeController");
 const { evaluate: evaluatePromotions } = require("../lib/promotions");
 const pdf = require("../lib/pdf");
+const { requireApproval, ApprovalError, sendApprovalError } = require("../lib/approval");
 const { moveKind, moveRef } = require("../lib/stockMoves");
 
 const branchOf = effectiveBranch;
@@ -452,6 +453,9 @@ exports.createReturn = async (req, res) => {
     if (total > left[refund_method] + 0.01) {
       throw new Error(`Only ${left[refund_method].toFixed(2)} paid by ${refund_method} is left to refund on this sale`);
     }
+    const approver = await requireApproval(req, {
+      column: "approve_refund_over", amount: total, permission: "pos.refund", what: `A refund of ${total.toFixed(2)}`,
+    });
 
     const shiftId = await openShiftId(req.user.id, client);
     const ins = await client.query(
@@ -460,6 +464,7 @@ exports.createReturn = async (req, res) => {
       [saleId, sale.branch_id, req.user.id, sale.customer_id, shiftId, reason || null, refund_method, subtotal, propTax, total, !!restock]
     );
     const retId = ins.rows[0].id;
+    if (approver) await client.query("UPDATE sale_returns SET approved_by = $1 WHERE id = $2", [approver.id, retId]);
     const receiptNo = `RT-${String(retId).padStart(5, "0")}`;
     await client.query("UPDATE sale_returns SET receipt_no = $1 WHERE id = $2", [receiptNo, retId]);
     await moveKind(client, { kind: "return", user_id: req.user.id, ref_type: "return", ref_id: retId, ref_no: receiptNo,
@@ -499,7 +504,7 @@ exports.createReturn = async (req, res) => {
     }
 
     await client.query("COMMIT");
-    logAudit(req, "refund", "sale", saleId, { return: receiptNo, total, method: refund_method, items: retLines.length, restocked: !!restock });
+    logAudit(req, "refund", "sale", saleId, { return: receiptNo, total, method: refund_method, items: retLines.length, restocked: !!restock, approved_by: approver?.full_name || null });
     // A large refund tells the alert recipients (after the refund is done).
     const notes = require("./notificationsController");
     notes.thresholds().then((th) => {
@@ -519,6 +524,7 @@ exports.createReturn = async (req, res) => {
     });
   } catch (e) {
     await client.query("ROLLBACK").catch(() => {});
+    if (e instanceof ApprovalError) return sendApprovalError(res, e);
     res.status(400).json({ message: e.message });
   } finally {
     client.release();

@@ -3,6 +3,13 @@ import { api } from "../lib/api.js";
 import { money, num } from "../lib/money.js";
 import { GitBranch, Plus, Loader2, X, Star, Pencil, MapPin, Phone, ArrowLeftRight, Trash2 } from "lucide-react";
 
+const TRANSFER_LABEL = { in_transit: "On its way", received: "Received", cancelled: "Called back" };
+const TRANSFER_CHIP = {
+  in_transit: "bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300",
+  received: "bg-brand-100 text-brand-700 dark:bg-brand-900/40 dark:text-brand-300",
+  cancelled: "bg-sage-100 text-sage-600 dark:bg-sage-800 dark:text-sage-300",
+};
+
 export default function Branches() {
   const [list, setList] = useState(null);
   const [transfers, setTransfers] = useState([]);
@@ -12,6 +19,12 @@ export default function Branches() {
 
   const load = () => api("/api/branches").then(setList).catch((e) => setErr(e.message));
   const loadTransfers = () => api("/api/transfers").then(setTransfers).catch(() => {});
+  const [transferErr, setTransferErr] = useState("");
+  const act = async (t, what) => {
+    setTransferErr("");
+    try { await api(`/api/transfers/${t.id}/${what}`, { method: "POST" }); load(); loadTransfers(); }
+    catch (e) { setTransferErr(e.message); }
+  };
   useEffect(() => { load(); loadTransfers(); }, []);
 
   return (
@@ -71,14 +84,27 @@ export default function Branches() {
       {transfers.length > 0 && (
         <div className="card p-6">
           <h2 className="mb-3 font-display text-lg font-semibold text-sage-900 dark:text-sage-50">Recent transfers</h2>
+          {transferErr && <div className="mb-2 text-sm text-rose-600 dark:text-rose-400">{transferErr}</div>}
           <div className="space-y-1 text-sm">
-            {transfers.slice(0, 8).map((t) => (
-              <div key={t.id} className="flex items-center justify-between border-b border-sage-100 py-2 last:border-0 dark:border-sage-800/60">
-                <div className="flex items-center gap-2 text-sage-700 dark:text-sage-200">
+            {transfers.slice(0, 12).map((t) => (
+              <div key={t.id} className="flex flex-wrap items-center justify-between gap-2 border-b border-sage-100 py-2 last:border-0 dark:border-sage-800/60">
+                <div className="flex flex-wrap items-center gap-2 text-sage-700 dark:text-sage-200">
                   <span className="font-medium">{t.reference}</span>
-                  <span className="text-sage-400">{t.from_branch} <ArrowLeftRight className="inline h-3 w-3" /> {t.to_branch}</span>
+                  <span className="text-sage-400">{t.from_branch} → {t.to_branch}</span>
+                  <span className={`chip ${TRANSFER_CHIP[t.status] || ""}`}>{TRANSFER_LABEL[t.status] || t.status}</span>
                 </div>
-                <span className="text-xs text-sage-400">{t.units} units · {new Date(t.created_at).toLocaleDateString()} · {t.moved_by}</span>
+                <div className="flex items-center gap-2">
+                  <span className="text-xs text-sage-400">
+                    {t.units} units · {new Date(t.created_at).toLocaleDateString()} · {t.moved_by}
+                    {t.received_by ? ` · received by ${t.received_by}` : ""}
+                  </span>
+                  {t.status === "in_transit" && (
+                    <>
+                      <button className="btn-primary !px-3 !py-1 text-xs" onClick={() => act(t, "receive")}>Received</button>
+                      <button className="btn-ghost !px-2 !py-1 text-xs text-sage-400 hover:text-rose-500" onClick={() => act(t, "cancel")} title="Call it back: the stock goes back to the sending branch">Call back</button>
+                    </>
+                  )}
+                </div>
               </div>
             ))}
           </div>

@@ -6,6 +6,7 @@ const TONE = {
   opening: "bg-sage-100 text-sage-600 dark:bg-sage-800 dark:text-sage-300",
   received: "bg-brand-100 text-brand-700 dark:bg-brand-900/40 dark:text-brand-300",
   transfer_in: "bg-brand-100 text-brand-700 dark:bg-brand-900/40 dark:text-brand-300",
+  transfer_cancelled: "bg-brand-100 text-brand-700 dark:bg-brand-900/40 dark:text-brand-300",
   return: "bg-brand-100 text-brand-700 dark:bg-brand-900/40 dark:text-brand-300",
   sale: "bg-rose-100 text-rose-700 dark:bg-rose-900/40 dark:text-rose-300",
   transfer_out: "bg-rose-100 text-rose-700 dark:bg-rose-900/40 dark:text-rose-300",

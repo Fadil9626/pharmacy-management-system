@@ -19,6 +19,45 @@ const monthsUntil = (d) => {
   return (new Date(d) - new Date()) / (1000 * 60 * 60 * 24 * 30.4);
 };
 
+/**
+ * Transfers on their way to this branch. Someone here confirms each one when
+ * it arrives — until then it is on nobody's shelf.
+ */
+function IncomingTransfers({ onReceived }) {
+  const { can, moduleEnabled } = useAuth();
+  const [rows, setRows] = useState([]);
+  const [err, setErr] = useState("");
+  const load = () => api("/api/transfers", { params: { incoming: 1 } }).then(setRows).catch(() => setRows([]));
+  useEffect(() => { if (moduleEnabled("branches")) load(); }, []);
+  if (!rows.length) return null;
+  const receive = async (t) => {
+    setErr("");
+    try { await api(`/api/transfers/${t.id}/receive`, { method: "POST" }); load(); onReceived?.(); }
+    catch (e) { setErr(e.message); }
+  };
+  return (
+    <div className="card border-amber-200 p-4 dark:border-amber-900/50">
+      <div className="mb-2 font-medium text-sage-900 dark:text-sage-50">Transfers on their way here</div>
+      {err && <div className="mb-2 text-sm text-rose-600 dark:text-rose-400">{err}</div>}
+      <div className="space-y-2">
+        {rows.map((t) => (
+          <div key={t.id} className="flex flex-wrap items-center justify-between gap-2 text-sm">
+            <div className="text-sage-700 dark:text-sage-200">
+              <span className="font-medium">{t.reference}</span> from {t.from_branch} ·{" "}
+              <span className="text-sage-500">{(t.items || []).map((i) => `${i.name} ×${i.qty}`).join(", ")}</span>
+            </div>
+            {can("inventory.receive") && (
+              <button className="btn-primary !px-3 !py-1.5 text-xs" onClick={() => receive(t)}>
+                <PackagePlus className="h-3.5 w-3.5" /> It's arrived
+              </button>
+            )}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function Modal({ title, onClose, children }) {
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
@@ -407,6 +446,8 @@ export default function Inventory() {
           {err}
         </div>
       )}
+
+      <IncomingTransfers onReceived={load} />
 
       <div className="card overflow-hidden">
         <div className="overflow-x-auto">

@@ -35,7 +35,35 @@ export async function downloadFile(path, filename) {
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
-export async function api(path, { method = "GET", body, params } = {}) {
+// Manager approval (see backend/lib/approval.js). When the server answers
+// APPROVAL_REQUIRED, the <ApprovalHost> mounted in the layout asks for the
+// approver's sign-in, and the same request is sent again carrying it — so no
+// screen has to know which actions need approving, or above what amount.
+let askApproval = null;
+export const setApprovalPrompt = (fn) => { askApproval = fn; };
+
+export async function api(path, opts = {}) {
+  try {
+    return await send(path, opts);
+  } catch (e) {
+    const code = e.data && e.data.code;
+    if (e.status !== 403 || !askApproval || !["APPROVAL_REQUIRED", "APPROVAL_INVALID", "APPROVAL_LOCKED"].includes(code)) throw e;
+    // Ask, and try again until it's approved or the person cancels.
+    let last = e;
+    for (;;) {
+      const approval = await askApproval({ message: last.message, retry: last.data.code !== "APPROVAL_REQUIRED" });
+      if (!approval) throw last;
+      try {
+        return await send(path, { ...opts, body: { ...(opts.body || {}), approval } });
+      } catch (again) {
+        if (again.status !== 403 || !(again.data && String(again.data.code).startsWith("APPROVAL_"))) throw again;
+        last = again;
+      }
+    }
+  }
+}
+
+async function send(path, { method = "GET", body, params } = {}) {
   const url = new URL(path, window.location.origin);
   if (params) {
     Object.entries(params).forEach(([k, v]) => {

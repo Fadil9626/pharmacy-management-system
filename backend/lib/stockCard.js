@@ -8,6 +8,7 @@ const LABEL = {
   return: "Returned by customer",
   transfer_out: "Transferred out",
   transfer_in: "Transferred in",
+  transfer_cancelled: "Transfer called back",
   adjustment: "Adjusted",
   count: "Stock count",
   disposal: "Destroyed",

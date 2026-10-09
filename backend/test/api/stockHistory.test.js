@@ -63,7 +63,9 @@ test("every kind of movement is recorded and labelled, and the history adds up t
   const item = (await h.api("GET", `/api/sales/${sale.body.id}`, { token })).body.items[0].id;
   assert.equal((await h.api("POST", `/api/sales/${sale.body.id}/return`, { token, body: { items: [{ sale_item_id: item, qty: 2 }], refund_method: "cash", restock: true } })).status, 201);
   // transfer to another branch
-  assert.equal((await h.api("POST", "/api/transfers", { token, body: { from_branch_id: 1, to_branch_id: 2, items: [{ product_id: pid, qty: 4 }] } })).status, 201);
+  const tr = await h.api("POST", "/api/transfers", { token, body: { from_branch_id: 1, to_branch_id: 2, items: [{ product_id: pid, qty: 4 }] } });
+  assert.equal(tr.status, 201);
+  assert.equal((await h.api("POST", `/api/transfers/${tr.body.id}/receive`, { token })).status, 200);
   // adjustment, count
   const batch = (await h.db().query("SELECT id FROM product_batches WHERE product_id = $1 AND branch_id = 1 AND quantity > 0 ORDER BY id LIMIT 1", [pid])).rows[0].id;
   assert.equal((await h.api("POST", "/api/stock/adjust", { token, body: { batch_id: batch, qty_change: -1, reason: "damaged", note: "dropped" } })).status, 200);

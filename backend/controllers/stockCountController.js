@@ -1,6 +1,7 @@
 const pool = require("../config/db");
 const { effectiveBranch, canSeeBranch } = require("../lib/context");
 const { logAudit } = require("../lib/audit");
+const { requireApproval, ApprovalError, sendApprovalError } = require("../lib/approval");
 const { moveKind, moveRef } = require("../lib/stockMoves");
 
 // Post a physical count: reconcile system stock to counted figures.
@@ -24,6 +25,7 @@ exports.create = async (req, res) => {
     await moveKind(client, { kind: "count", user_id: req.user.id, ref_type: "stock_count", ref_id: cid, ref_no: `Count #${cid}` });
     let counted = 0;
     let varianceValue = 0;
+    let differenceValue = 0;   // over and short both count: they don't cancel for approval
 
     for (const it of items) {
       const productId = Number(it.product_id);
@@ -67,6 +69,7 @@ exports.create = async (req, res) => {
 
       if (variance !== 0) {
         varianceValue += variance * unitCost;
+        differenceValue += Math.abs(variance) * unitCost;
         await client.query(
           `INSERT INTO stock_adjustments (batch_id, product_id, branch_id, user_id, reason, qty_change, note)
            VALUES ($1,$2,$3,$4,'correction',$5,$6)`,
@@ -83,12 +86,18 @@ exports.create = async (req, res) => {
 
     if (!counted) throw new Error("Nothing counted — enter a quantity for at least one product");
     const vv = Math.round(varianceValue * 100) / 100;
+    const approver = await requireApproval(req, {
+      column: "approve_count_value_over", amount: differenceValue, permission: "inventory.adjust",
+      what: `A count with differences worth ${differenceValue.toFixed(2)}`,
+    });
+    if (approver) await client.query("UPDATE stock_counts SET approved_by = $1 WHERE id = $2", [approver.id, cid]);
     await client.query("UPDATE stock_counts SET items_counted = $1, variance_value = $2 WHERE id = $3", [counted, vv, cid]);
     await client.query("COMMIT");
     logAudit(req, "stock_count", "stock_count", cid, { items: counted, variance_value: vv });
     res.status(201).json({ id: cid, items_counted: counted, variance_value: vv });
   } catch (e) {
     await client.query("ROLLBACK").catch(() => {});
+    if (e instanceof ApprovalError) return sendApprovalError(res, e);
     res.status(400).json({ message: e.message });
   } finally {
     client.release();

@@ -2,6 +2,7 @@ const pool = require("../config/db");
 const { effectiveBranch, canSeeBranch } = require("../lib/context");
 const { userCan } = require("../lib/permissions");
 const { logAudit } = require("../lib/audit");
+const { requireApproval, ApprovalError, sendApprovalError } = require("../lib/approval");
 
 // Find the caller's current open shift id (used by POS to tag sales).
 async function openShiftId(userId, db = pool) {
@@ -136,13 +137,17 @@ exports.cashMovement = async (req, res) => {
   try {
     const id = await openShiftId(req.user.id);
     if (!id) return res.status(400).json({ message: "Open a till first" });
+    const approver = type === "payout"
+      ? await requireApproval(req, { column: "approve_payout_over", amount: amt, permission: "finance.payout", what: `Paying out ${amt.toFixed(2)}` })
+      : null;
     await pool.query(
-      "INSERT INTO cash_movements (shift_id, type, amount, note, user_id) VALUES ($1,$2,$3,$4,$5)",
-      [id, type, amt, note || null, req.user.id]
+      "INSERT INTO cash_movements (shift_id, type, amount, note, user_id, approved_by) VALUES ($1,$2,$3,$4,$5,$6)",
+      [id, type, amt, note || null, req.user.id, approver?.id || null]
     );
-    if (type === "payout") logAudit(req, "till_payout", "shift", id, { amount: amt, note: note || null });
+    if (type === "payout") logAudit(req, "till_payout", "shift", id, { amount: amt, note: note || null, approved_by: approver?.full_name || null });
     res.status(201).json({ success: true });
   } catch (e) {
+    if (e instanceof ApprovalError) return sendApprovalError(res, e);
     res.status(500).json({ message: e.message });
   }
 };

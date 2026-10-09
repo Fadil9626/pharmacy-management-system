@@ -16,6 +16,7 @@ exports.get = async (_req, res) => {
 };
 
 const numOrNull = (v) => (v != null && v !== "" ? Number(v) : null);
+const nonNegOrNull = (v) => { const n = numOrNull(v); return n != null && Number.isFinite(n) && n >= 0 ? n : null; };
 
 // A field the request leaves out keeps its value; an empty string clears it.
 // Text fields used to be set to whatever was sent, so a save that sent only
@@ -29,6 +30,8 @@ exports.update = async (req, res) => {
     near_expiry_months, low_stock_default, loyalty_points_per_unit, loyalty_redeem_value,
     logo, theme, brand_color, theme_config,
     receipt_paper, label_size, barcode_prefix, barcode_auto, require_expiry_on_receive,
+    approve_refund_over, approve_payout_over, approve_adjust_units_over, approve_count_value_over,
+    transfers_need_receiving,
   } = req.body || {};
   if (pricing_mode && !["fixed", "market"].includes(pricing_mode))
     return res.status(400).json({ message: "Invalid pricing mode" });
@@ -60,6 +63,11 @@ exports.update = async (req, res) => {
          barcode_prefix          = CASE WHEN $23::text IS NULL THEN barcode_prefix ELSE $23::text END,
          barcode_auto            = COALESCE($24, barcode_auto),
          require_expiry_on_receive = COALESCE($25, require_expiry_on_receive),
+         approve_refund_over       = COALESCE($26, approve_refund_over),
+         approve_payout_over       = COALESCE($27, approve_payout_over),
+         approve_adjust_units_over = COALESCE($28, approve_adjust_units_over),
+         approve_count_value_over  = COALESCE($29, approve_count_value_over),
+         transfers_need_receiving  = COALESCE($30, transfers_need_receiving),
          updated_at              = NOW()
        WHERE id = 1 RETURNING *`,
       [
@@ -88,6 +96,11 @@ exports.update = async (req, res) => {
         barcode_prefix === undefined ? null : barcode_prefix,
         typeof barcode_auto === "boolean" ? barcode_auto : null,
         typeof require_expiry_on_receive === "boolean" ? require_expiry_on_receive : null,
+        nonNegOrNull(approve_refund_over),
+        nonNegOrNull(approve_payout_over),
+        nonNegOrNull(approve_adjust_units_over) == null ? null : Math.round(nonNegOrNull(approve_adjust_units_over)),
+        nonNegOrNull(approve_count_value_over),
+        typeof transfers_need_receiving === "boolean" ? transfers_need_receiving : null,
       ]
     );
     logAudit(req, "settings_update", "settings", 1, { fields: Object.keys(req.body || {}) });

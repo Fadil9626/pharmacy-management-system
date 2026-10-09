@@ -5,6 +5,7 @@ import { useTheme } from "../lib/theme.js";
 import ErrorBoundary from "./ErrorBoundary.jsx";
 import { Loader2 } from "lucide-react";
 import { api, getActiveBranch, setActiveBranch } from "../lib/api.js";
+import ApprovalHost from "./ApprovalHost.jsx";
 import {
   Pill, Plus, LayoutDashboard, Boxes, ShoppingCart, Receipt, Truck, FileText,
   Users, ClipboardList, ShieldAlert, Wallet, GitBranch, Moon, Sun,
@@ -409,6 +410,7 @@ export default function Layout() {
               </div>
             }>
               <Outlet />
+              <ApprovalHost />
             </Suspense>
           </ErrorBoundary>
         </main>

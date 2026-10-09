@@ -3,6 +3,7 @@ const { pricingContext, effectivePrice } = require("../lib/pricing");
 const { effectiveBranch, canSeeBranch } = require("../lib/context");
 const { logAudit } = require("../lib/audit");
 const { mint } = require("../lib/barcode");
+const { requireApproval, ApprovalError, sendApprovalError } = require("../lib/approval");
 const { moveKind, moveRef } = require("../lib/stockMoves");
 
 const branchOf = effectiveBranch;
@@ -309,20 +310,25 @@ exports.adjustStock = async (req, res) => {
     const batch = b.rows[0];
     const newQty = batch.quantity + change;
     if (newQty < 0) throw new Error(`Only ${batch.quantity} in this batch — can't remove ${Math.abs(change)}`);
+    const approver = await requireApproval(req, {
+      column: "approve_adjust_units_over", amount: Math.abs(change), permission: "inventory.adjust",
+      what: `${change < 0 ? "Writing off" : "Adding"} ${Math.abs(change)} units`,
+    });
 
     await moveKind(client, { kind: "adjustment", user_id: req.user.id, ref_type: "batch", ref_id: Number(batch_id),
       ref_no: batch.batch_no || null, detail: { reason, note: note || null } });
     await client.query("UPDATE product_batches SET quantity = $1 WHERE id = $2", [newQty, batch_id]);
     await client.query(
-      `INSERT INTO stock_adjustments (batch_id, product_id, branch_id, user_id, reason, qty_change, note)
-       VALUES ($1,$2,$3,$4,$5,$6,$7)`,
-      [batch_id, batch.product_id, batch.branch_id, req.user.id, reason, change, note || null]
+      `INSERT INTO stock_adjustments (batch_id, product_id, branch_id, user_id, reason, qty_change, note, approved_by)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
+      [batch_id, batch.product_id, batch.branch_id, req.user.id, reason, change, note || null, approver?.id || null]
     );
     await client.query("COMMIT");
     logAudit(req, "stock_adjust", "batch", batch_id, { product_id: batch.product_id, reason, qty_change: change, new_quantity: newQty, note: note || null });
     res.json({ success: true, batch_id, new_quantity: newQty });
   } catch (e) {
     await client.query("ROLLBACK").catch(() => {});
+    if (e instanceof ApprovalError) return sendApprovalError(res, e);
     res.status(400).json({ message: e.message });
   } finally {
     client.release();

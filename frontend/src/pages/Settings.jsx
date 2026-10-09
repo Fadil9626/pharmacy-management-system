@@ -30,6 +30,7 @@ const TABS = [
   { key: "sales", label: "Sales & Tax", icon: Percent },
   { key: "inventory", label: "Inventory", icon: Boxes },
   { key: "receipt", label: "Receipt", icon: ReceiptText },
+  { key: "approvals", label: "Approvals", icon: ShieldCheck },
   { key: "notifications", label: "Notifications", icon: Bell },
   { key: "modules", label: "Modules", icon: Blocks },
   { key: "updates", label: "Software Updates", icon: Download },
@@ -184,11 +185,38 @@ export default function Settings() {
                 className="h-4 w-4 rounded border-sage-300 text-brand-600 focus:ring-brand-500" />
               Require an expiry date when receiving stock
             </label>
+            <label className="flex items-center gap-2.5 text-sm text-sage-700 dark:text-sage-300">
+              <input type="checkbox" checked={f.transfers_need_receiving ?? true} onChange={(e) => setF({ ...f, transfers_need_receiving: e.target.checked })} disabled={!canEdit}
+                className="h-4 w-4 rounded border-sage-300 text-brand-600 focus:ring-brand-500" />
+              Transfers wait until the receiving branch confirms they arrived
+            </label>
             <p className="text-xs text-sage-400">
               Batches expiring within the window are flagged on the dashboard, inventory and reports. New products start at the default reorder level.
             </p>
             <p className="text-xs text-sage-400">
               <b>Barcode prefix:</b> leave blank for numeric EAN-13. Enter letters (e.g. <code>RMD</code>) for lettered CODE128 SKUs like <code>RMD00482</code>, or use <code>{"{name}"}</code> to start from the product name (Paracetamol → <code>PAR00482</code>). With auto-generate on, every new product gets one in this scheme — no typing.
+            </p>
+          </Section>
+        )}
+
+        {tab === "approvals" && (
+          <Section icon={ShieldCheck} title="Manager approval" hint="Above these amounts a manager or owner approves on the spot, signing in on the same screen. 0 = no approval needed.">
+            <div className="grid gap-3 sm:grid-cols-2">
+              <Field label={`A refund of at least (${f.currency_symbol || "$"})`}>
+                <input type="number" min="0" step="0.01" className="input" value={f.approve_refund_over ?? 0} onChange={set("approve_refund_over")} disabled={!canEdit} />
+              </Field>
+              <Field label={`Cash paid out of the till of at least (${f.currency_symbol || "$"})`}>
+                <input type="number" min="0" step="0.01" className="input" value={f.approve_payout_over ?? 0} onChange={set("approve_payout_over")} disabled={!canEdit} />
+              </Field>
+              <Field label="A stock adjustment of at least (units)">
+                <input type="number" min="0" step="1" className="input" value={f.approve_adjust_units_over ?? 0} onChange={set("approve_adjust_units_over")} disabled={!canEdit} />
+              </Field>
+              <Field label={`A stock count with differences worth at least (${f.currency_symbol || "$"}, at cost)`}>
+                <input type="number" min="0" step="0.01" className="input" value={f.approve_count_value_over ?? 0} onChange={set("approve_count_value_over")} disabled={!canEdit} />
+              </Field>
+            </div>
+            <p className="text-xs text-sage-400">
+              The approver must be a manager or owner allowed to do the same thing, and can't approve their own request. Who approved is kept on the record and in the audit log.
             </p>
           </Section>
         )}
