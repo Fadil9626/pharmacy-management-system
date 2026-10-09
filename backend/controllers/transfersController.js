@@ -1,6 +1,7 @@
 const pool = require("../config/db");
 const { effectiveBranch, CROSS_BRANCH_ROLES } = require("../lib/context");
 const { logAudit } = require("../lib/audit");
+const { moveKind, moveRef } = require("../lib/stockMoves");
 
 // Move stock between branches: FEFO-deduct at source, recreate batches at dest.
 exports.create = async (req, res) => {
@@ -36,6 +37,10 @@ exports.create = async (req, res) => {
     const trId = tr.rows[0].id;
     const reference = `TR-${String(trId).padStart(5, "0")}`;
     await client.query("UPDATE stock_transfers SET reference = $1 WHERE id = $2", [reference, trId]);
+    const names = Object.fromEntries((await client.query("SELECT id, name FROM branches WHERE id = ANY($1)", [[fromBranch, toBranch]])).rows.map((b) => [b.id, b.name]));
+    if (!names[toBranch]) throw new Error("That destination branch doesn't exist");
+    const out = { kind: "transfer_out", user_id: req.user.id, ref_type: "transfer", ref_id: trId, ref_no: reference, party: names[toBranch] };
+    const into = { ...out, kind: "transfer_in", party: names[fromBranch] || null };
 
     for (const it of items) {
       const productId = Number(it.product_id);
@@ -46,6 +51,7 @@ exports.create = async (req, res) => {
 
       const batches = await client.query(
         `SELECT * FROM product_batches WHERE product_id = $1 AND branch_id = $2 AND quantity > 0
+           AND (expiry_date IS NULL OR expiry_date >= CURRENT_DATE)
          ORDER BY expiry_date NULLS LAST, id FOR UPDATE`,
         [productId, fromBranch]
       );
@@ -56,7 +62,9 @@ exports.create = async (req, res) => {
       for (const b of batches.rows) {
         if (need <= 0) break;
         const take = Math.min(need, b.quantity);
+        await moveKind(client, out);
         await client.query("UPDATE product_batches SET quantity = quantity - $1 WHERE id = $2", [take, b.id]);
+        await moveKind(client, into);
         await client.query(
           `INSERT INTO product_batches (product_id, branch_id, supplier_id, batch_no, expiry_date, quantity, cost_price, selling_price)
            VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,

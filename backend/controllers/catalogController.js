@@ -3,6 +3,7 @@ const { pricingContext, effectivePrice } = require("../lib/pricing");
 const { effectiveBranch, canSeeBranch } = require("../lib/context");
 const { logAudit } = require("../lib/audit");
 const { mint } = require("../lib/barcode");
+const { moveKind, moveRef } = require("../lib/stockMoves");
 
 const branchOf = effectiveBranch;
 
@@ -309,6 +310,8 @@ exports.adjustStock = async (req, res) => {
     const newQty = batch.quantity + change;
     if (newQty < 0) throw new Error(`Only ${batch.quantity} in this batch — can't remove ${Math.abs(change)}`);
 
+    await moveKind(client, { kind: "adjustment", user_id: req.user.id, ref_type: "batch", ref_id: Number(batch_id),
+      ref_no: batch.batch_no || null, detail: { reason, note: note || null } });
     await client.query("UPDATE product_batches SET quantity = $1 WHERE id = $2", [newQty, batch_id]);
     await client.query(
       `INSERT INTO stock_adjustments (batch_id, product_id, branch_id, user_id, reason, qty_change, note)
@@ -374,13 +377,38 @@ exports.receiveStock = async (req, res) => {
       qtyUnits = Number(quantity) * packSize;
       unitCost = Math.round((unitCost / packSize) * 10000) / 10000;
     }
-    const { rows } = await pool.query(
-      `INSERT INTO product_batches (product_id, branch_id, supplier_id, batch_no, expiry_date, quantity, cost_price, selling_price)
-       VALUES ($1,$2,$3,$4,$5,$6,COALESCE($7::numeric,0),COALESCE($8::numeric,0)) RETURNING *`,
-      [product_id, branchId, supplier_id || null, batch_no || null, expiry_date || null,
-       qtyUnits, unitCost, selling_price]
-    );
-    res.status(201).json(rows[0]);
+    const client = await pool.connect();
+    try {
+      await client.query("BEGIN");
+      const sup = supplier_id ? (await client.query("SELECT name FROM suppliers WHERE id = $1", [supplier_id])).rows[0] : null;
+      await moveKind(client, { kind: "received", user_id: req.user.id, party: sup?.name || null, ref_no: batch_no || null });
+      const { rows } = await client.query(
+        `INSERT INTO product_batches (product_id, branch_id, supplier_id, batch_no, expiry_date, quantity, cost_price, selling_price)
+         VALUES ($1,$2,$3,$4,$5,$6,COALESCE($7::numeric,0),COALESCE($8::numeric,0)) RETURNING *`,
+        [product_id, branchId, supplier_id || null, batch_no || null, expiry_date || null,
+         qtyUnits, unitCost, selling_price]
+      );
+      await client.query("COMMIT");
+      res.status(201).json(rows[0]);
+    } catch (e) {
+      await client.query("ROLLBACK").catch(() => {});
+      throw e;
+    } finally {
+      client.release();
+    }
+  } catch (e) {
+    res.status(500).json({ message: e.message });
+  }
+};
+
+// The stock card: every change to this product's stock, with the running balance.
+exports.stockCard = async (req, res) => {
+  const productId = Number(req.params.id);
+  try {
+    const p = (await pool.query("SELECT id, name, strength, unit FROM products WHERE id = $1", [productId])).rows[0];
+    if (!p) return res.status(404).json({ message: "Product not found" });
+    const card = await require("../lib/stockCard").stockCard(productId, effectiveBranch(req));
+    res.json({ product: p, ...card });
   } catch (e) {
     res.status(500).json({ message: e.message });
   }

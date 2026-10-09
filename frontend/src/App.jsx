@@ -14,6 +14,7 @@ import { Pill } from "lucide-react";
 const Login = lazyWithRetry(() => import("./pages/Login.jsx"));
 const Dashboard = lazyWithRetry(() => import("./pages/Dashboard.jsx"));
 const Inventory = lazyWithRetry(() => import("./pages/Inventory.jsx"));
+const StockCard = lazyWithRetry(() => import("./pages/StockCard.jsx"));
 const POS = lazyWithRetry(() => import("./pages/POS.jsx"));
 const Sales = lazyWithRetry(() => import("./pages/Sales.jsx"));
 const Customers = lazyWithRetry(() => import("./pages/Customers.jsx"));
@@ -36,6 +37,7 @@ const STAFF = ["owner", "manager", "pharmacist"]; // everyone except cashier
 const ROUTES = [
   { index: true, el: <Dashboard /> },
   { path: "inventory", el: <Inventory />, module: "inventory", roles: STAFF },
+  { path: "inventory/:id/stock-card", el: <StockCard />, module: "inventory", roles: STAFF },
   { path: "pos", el: <POS />, module: "pos" },              // cashiers' core screen — open to all roles
   { path: "sales", el: <Sales />, module: "pos" },          // reprint receipts — open to all roles
   { path: "promotions", el: <Promotions />, module: "pos", roles: ["owner", "manager"] },

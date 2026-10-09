@@ -1,6 +1,7 @@
 const pool = require("../config/db");
 const { effectiveBranch, canSeeBranch } = require("../lib/context");
 const { logAudit } = require("../lib/audit");
+const { moveKind, moveRef } = require("../lib/stockMoves");
 
 // Post a physical count: reconcile system stock to counted figures.
 // Body: { note?, items: [{ product_id, counted_qty }] }. Rows with a blank
@@ -20,6 +21,7 @@ exports.create = async (req, res) => {
       [branchId, req.user.id, note || null]
     );
     const cid = head.rows[0].id;
+    await moveKind(client, { kind: "count", user_id: req.user.id, ref_type: "stock_count", ref_id: cid, ref_no: `Count #${cid}` });
     let counted = 0;
     let varianceValue = 0;
 

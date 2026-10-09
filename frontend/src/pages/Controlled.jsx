@@ -1,16 +1,12 @@
 import { useEffect, useState } from "react";
 import { api } from "../lib/api.js";
 import { num } from "../lib/money.js";
+import StockLedger from "../components/StockLedger.jsx";
 import {
   ShieldAlert, Loader2, ArrowDownToLine, ArrowUpFromLine, SlidersHorizontal,
   Scale, Printer,
 } from "lucide-react";
 
-const TYPE = {
-  received: { label: "Received", icon: ArrowDownToLine, tone: "text-brand-600", chip: "bg-brand-100 text-brand-700 dark:bg-brand-900/40 dark:text-brand-300" },
-  dispensed: { label: "Dispensed", icon: ArrowUpFromLine, tone: "text-rose-600", chip: "bg-rose-100 text-rose-700 dark:bg-rose-900/40 dark:text-rose-300" },
-};
-const adjChip = "bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300";
 
 export default function Controlled() {
   const [products, setProducts] = useState(null);
@@ -85,41 +81,7 @@ export default function Controlled() {
                   <div className="border-b border-sage-200 px-5 py-3 font-display text-lg font-semibold text-sage-900 dark:border-sage-800 dark:text-sage-50">
                     {reg.product}
                   </div>
-                  <div className="overflow-x-auto">
-                    <table className="w-full text-sm">
-                      <thead>
-                        <tr className="border-b border-sage-200 text-left text-xs uppercase tracking-wide text-sage-400 dark:border-sage-800">
-                          <th className="px-5 py-2.5 font-medium">Date</th>
-                          <th className="px-5 py-2.5 font-medium">Movement</th>
-                          <th className="px-5 py-2.5 font-medium">Reference</th>
-                          <th className="px-5 py-2.5 font-medium">Party / by</th>
-                          <th className="px-5 py-2.5 text-right font-medium">In</th>
-                          <th className="px-5 py-2.5 text-right font-medium">Out</th>
-                          <th className="px-5 py-2.5 text-right font-medium">Balance</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {reg.ledger.length === 0 ? (
-                          <tr><td colSpan={7} className="px-5 py-10 text-center text-sage-400">No movements recorded.</td></tr>
-                        ) : reg.ledger.map((m, i) => {
-                          const t = TYPE[m.type];
-                          return (
-                            <tr key={i} className="border-b border-sage-100 last:border-0 dark:border-sage-800/60">
-                              <td className="px-5 py-2.5 text-sage-500">{new Date(m.at).toLocaleDateString()}</td>
-                              <td className="px-5 py-2.5">
-                                <span className={`chip capitalize ${t ? t.chip : adjChip}`}>{t ? t.label : m.type}</span>
-                              </td>
-                              <td className="px-5 py-2.5 text-sage-500">{m.ref || "—"}</td>
-                              <td className="px-5 py-2.5 text-sage-600 dark:text-sage-300">{m.party || m.actor || "—"}</td>
-                              <td className="px-5 py-2.5 text-right font-medium text-brand-600 dark:text-brand-400">{m.delta > 0 ? num(m.delta) : ""}</td>
-                              <td className="px-5 py-2.5 text-right font-medium text-rose-600 dark:text-rose-400">{m.delta < 0 ? num(-m.delta) : ""}</td>
-                              <td className="px-5 py-2.5 text-right font-semibold text-sage-900 dark:text-sage-50">{num(m.balance)}</td>
-                            </tr>
-                          );
-                        })}
-                      </tbody>
-                    </table>
-                  </div>
+                  <StockLedger card={reg} />
                 </div>
               </>
             )}

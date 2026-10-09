@@ -1,5 +1,5 @@
 import { Fragment, useEffect, useMemo, useState } from "react";
-import { useSearchParams } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import { api } from "../lib/api.js";
 import { useAuth } from "../context/AuthContext.jsx";
 import { money } from "../lib/money.js";
@@ -8,7 +8,7 @@ import ConfirmModal from "../components/Confirm.jsx";
 import {
   Search, Plus, PackagePlus, X, Loader2, AlertTriangle, CalendarClock,
   Boxes, ShieldAlert, Pencil, Layers, Trash2, SlidersHorizontal, Upload, Download, CheckCircle2, FileSpreadsheet,
-  ClipboardCheck, Barcode, Printer, RefreshCw, ImagePlus,
+  ClipboardCheck, Barcode, Printer, RefreshCw, ImagePlus, History,
 } from "lucide-react";
 import { barcodeSVG, printBarcodeLabels } from "../lib/barcode.js";
 import { fileToImage } from "../lib/branding.js";
@@ -479,6 +479,9 @@ export default function Inventory() {
                         <button className="btn-ghost !px-2 !py-1.5 text-xs" onClick={() => setExpanded(expanded === p.id ? null : p.id)} title="Batches">
                           <Layers className="h-4 w-4" />
                         </button>
+                        <Link to={`/inventory/${p.id}/stock-card`} className="btn-ghost !px-2 !py-1.5 text-xs" title="Stock card — every movement">
+                          <History className="h-4 w-4" />
+                        </Link>
                         {can("inventory.manage") && (
                           <button className="btn-ghost !px-2 !py-1.5 text-xs" onClick={() => setBarcodeFor(p)} title="Barcode & labels">
                             <Barcode className="h-4 w-4" />

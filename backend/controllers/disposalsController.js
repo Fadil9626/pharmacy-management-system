@@ -1,4 +1,6 @@
 const pool = require("../config/db");
+const { moveKind, moveRef } = require("../lib/stockMoves");
+const { canSeeBranch } = require("../lib/context");
 const { logAudit } = require("../lib/audit");
 const pdf = require("../lib/pdf");
 
@@ -72,6 +74,7 @@ exports.create = async (req, res) => {
       [batch_ids.map(Number)]
     );
     if (!batches.length) throw new Error("None of those batches exist");
+    if (batches.some((b) => !canSeeBranch(req, b.branch_id))) throw new Error("None of those batches exist");
 
     // A controlled drug destroyed without a named witness is a compliance
     // problem, not a paperwork preference — so it is refused rather than
@@ -87,6 +90,8 @@ exports.create = async (req, res) => {
        method || null, String(witness_name || "").trim() || null, note || null]
     );
     const disposalId = d.rows[0].id;
+    await moveKind(client, { kind: "disposal", user_id: req.user.id, ref_type: "disposal", ref_id: disposalId,
+      detail: { reason, witness: String(witness_name || "").trim() || null } });
 
     let units = 0, cost = 0;
     for (const b of batches) {
@@ -119,6 +124,7 @@ exports.create = async (req, res) => {
     if (units === 0) throw new Error("Those batches are already empty — nothing to dispose of");
 
     const ref = `DSP-${String(disposalId).padStart(5, "0")}`;
+    await client.query("UPDATE stock_moves SET ref_no = $1 WHERE txid = txid_current() AND ref_type = 'disposal' AND ref_id = $2", [ref, disposalId]);
     await client.query(
       "UPDATE disposals SET ref = $1, total_units = $2, total_cost = $3 WHERE id = $4",
       [ref, units, cost, disposalId]

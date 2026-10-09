@@ -1,4 +1,5 @@
 const pool = require("../config/db");
+const { moveKind, moveRef } = require("../lib/stockMoves");
 const { effectiveBranch } = require("../lib/context");
 const { logAudit } = require("../lib/audit");
 
@@ -43,6 +44,9 @@ exports.create = async (req, res) => {
     const rid = head.rows[0].id;
     const reference = `RTV-${String(rid).padStart(5, "0")}`;
     await client.query("UPDATE stock_returns_vendor SET reference = $1 WHERE id = $2", [reference, rid]);
+    const sup = (await client.query("SELECT name FROM suppliers WHERE id = $1", [Number(supplier_id)])).rows[0];
+    await moveKind(client, { kind: "return_to_supplier", user_id: req.user.id, ref_type: "rtv", ref_id: rid, ref_no: reference,
+      party: sup?.name || null, detail: { reason: reason || null } });
 
     let totalCredit = 0;
     for (const it of items) {
@@ -53,7 +57,7 @@ exports.create = async (req, res) => {
         "SELECT b.*, p.name FROM product_batches b JOIN products p ON b.product_id = p.id WHERE b.id = $1 FOR UPDATE",
         [batchId]
       )).rows[0];
-      if (!b) throw new Error("Batch not found");
+      if (!b || b.branch_id !== branchId) throw new Error("Batch not found at this branch");
       if (b.supplier_id !== Number(supplier_id)) throw new Error(`${b.name}: batch isn't from this supplier`);
       if (qty > b.quantity) throw new Error(`${b.name}: only ${b.quantity} on hand`);
       const credit = Math.round(qty * Number(b.cost_price) * 100) / 100;

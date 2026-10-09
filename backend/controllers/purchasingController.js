@@ -2,6 +2,7 @@ const pool = require("../config/db");
 const { effectiveBranch } = require("../lib/context");
 const { logAudit } = require("../lib/audit");
 const { expiryProblem } = require("../lib/receiving");
+const { moveKind, moveRef } = require("../lib/stockMoves");
 
 const branchOf = effectiveBranch;
 
@@ -187,6 +188,9 @@ exports.receivePO = async (req, res) => {
     // received so far; the order is "partial" until every line is complete.
     // What the supplier is owed is the cost of what arrived (received_value),
     // not the cost of what was ordered.
+    const sup = po.supplier_id ? (await client.query("SELECT name FROM suppliers WHERE id = $1", [po.supplier_id])).rows[0] : null;
+    await moveKind(client, { kind: "received", user_id: req.user.id, ref_type: "purchase_order", ref_id: poId,
+      ref_no: po.po_number, party: sup?.name || null });
     const items = await client.query("SELECT i.*, p.name AS product_name FROM purchase_order_items i JOIN products p ON p.id = i.product_id WHERE i.po_id = $1 ORDER BY i.id FOR UPDATE OF i", [poId]);
     let received = 0;
     let value = 0;

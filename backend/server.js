@@ -189,6 +189,7 @@ app.post("/api/barcode/generate", protect, requireModule("inventory"), requirePe
 app.put("/api/products/:id", protect, requireModule("inventory"), requirePermission("inventory.manage"), catalog.updateProduct);
 app.delete("/api/products/:id", protect, requireModule("inventory"), requirePermission("inventory.manage"), catalog.deactivateProduct);
 app.get("/api/batches", protect, requireModule("inventory"), catalog.listBatches);
+app.get("/api/products/:id/stock-card", protect, requireModule("inventory"), catalog.stockCard);
 app.post("/api/stock/receive", protect, requireModule("inventory"), requirePermission("inventory.receive"), catalog.receiveStock);
 app.post("/api/stock/adjust", protect, requireModule("inventory"), requirePermission("inventory.adjust"), catalog.adjustStock);
 app.get("/api/stock-counts", protect, requireModule("inventory"), stockCounts.list);

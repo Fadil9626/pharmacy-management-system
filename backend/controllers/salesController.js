@@ -7,6 +7,7 @@ const { logAudit } = require("../lib/audit");
 const { openShiftId } = require("./financeController");
 const { evaluate: evaluatePromotions } = require("../lib/promotions");
 const pdf = require("../lib/pdf");
+const { moveKind, moveRef } = require("../lib/stockMoves");
 
 const branchOf = effectiveBranch;
 
@@ -107,6 +108,7 @@ exports.createSale = async (req, res) => {
 
     // Live pricing context (mode + current market rate) read inside the txn.
     const ctx = await pricingContext(client);
+    await moveKind(client, { kind: "sale", user_id: req.user.id });
 
     let subtotal = 0;
     let hasControlled = false;
@@ -249,6 +251,10 @@ exports.createSale = async (req, res) => {
     const saleId = sale.rows[0].id;
     const receiptNo = `R-${String(saleId).padStart(5, "0")}`;
     await client.query("UPDATE sales SET receipt_no = $1 WHERE id = $2", [receiptNo, saleId]);
+    await moveRef(client, {
+      ref_type: "sale", ref_id: saleId, ref_no: receiptNo, party: custName,
+      detail: prescriber_license ? { prescriber: prescriber_name || null, license: prescriber_license } : null,
+    });
 
     for (const l of lines) {
       await client.query(
@@ -456,6 +462,8 @@ exports.createReturn = async (req, res) => {
     const retId = ins.rows[0].id;
     const receiptNo = `RT-${String(retId).padStart(5, "0")}`;
     await client.query("UPDATE sale_returns SET receipt_no = $1 WHERE id = $2", [receiptNo, retId]);
+    await moveKind(client, { kind: "return", user_id: req.user.id, ref_type: "return", ref_id: retId, ref_no: receiptNo,
+      party: sale.customer_name || null, detail: { sale: sale.receipt_no, reason: reason || null } });
 
     for (const l of retLines) {
       await client.query(
